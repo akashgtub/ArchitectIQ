@@ -217,3 +217,227 @@ def test_optimization_request_json_file():
     assert res.status == "success"
     assert res.recommended_candidate is not None
     assert len(res.trade_off_analysis) > 0
+
+
+def test_controlled_tradeoff_ranking_all_objectives(baseline_graph, test_workload):
+    """Controlled test candidates with deliberately different metrics must rank correctly for each objective,
+    and infeasible candidates must NEVER outrank feasible candidates."""
+    from backend.simulator.schemas import PerformanceMetrics
+
+    cand_cheap = {
+        "candidate_id": "cand-cheap",
+        "name": "Cost Minimized",
+        "description": "Downscaled resources",
+        "modifications": ["downscale"],
+        "architecture": baseline_graph,
+        "metrics": PerformanceMetrics(
+            mean_latency_ms=70.0,
+            p50_latency_ms=65.0,
+            p95_latency_ms=85.0,
+            p99_latency_ms=110.0,
+            throughput_rps=250.0,
+            error_rate=0.0,
+            completed_requests=2500,
+            dropped_requests=0,
+            total_monthly_cost_usd=80.0,
+            component_breakdown={},
+        ),
+        "is_feasible": True,
+        "violations": [],
+    }
+
+    cand_fast = {
+        "candidate_id": "cand-fast",
+        "name": "Lowest Latency",
+        "description": "Upgraded cache and provisioned SSD",
+        "modifications": ["upgrade-db"],
+        "architecture": baseline_graph,
+        "metrics": PerformanceMetrics(
+            mean_latency_ms=8.0,
+            p50_latency_ms=7.0,
+            p95_latency_ms=12.0,
+            p99_latency_ms=18.0,
+            throughput_rps=500.0,
+            error_rate=0.0,
+            completed_requests=5000,
+            dropped_requests=0,
+            total_monthly_cost_usd=450.0,
+            component_breakdown={},
+        ),
+        "is_feasible": True,
+        "violations": [],
+    }
+
+    cand_high_tp = {
+        "candidate_id": "cand-high-tp",
+        "name": "Max Throughput",
+        "description": "Clustered replicas with high capacity",
+        "modifications": ["cluster-scale"],
+        "architecture": baseline_graph,
+        "metrics": PerformanceMetrics(
+            mean_latency_ms=22.0,
+            p50_latency_ms=18.0,
+            p95_latency_ms=30.0,
+            p99_latency_ms=45.0,
+            throughput_rps=1200.0,
+            error_rate=0.0,
+            completed_requests=12000,
+            dropped_requests=0,
+            total_monthly_cost_usd=380.0,
+            component_breakdown={},
+        ),
+        "is_feasible": True,
+        "violations": [],
+    }
+
+    cand_infeasible = {
+        "candidate_id": "cand-infeasible",
+        "name": "Super Cheap Infeasible",
+        "description": "Extremely low cost but violates latency SLA",
+        "modifications": ["extreme-downscale"],
+        "architecture": baseline_graph,
+        "metrics": PerformanceMetrics(
+            mean_latency_ms=3.0,
+            p50_latency_ms=2.0,
+            p95_latency_ms=4.0,  # lower latency than all!
+            p99_latency_ms=6.0,
+            throughput_rps=2500.0,  # higher throughput than all!
+            error_rate=0.0,
+            completed_requests=25000,
+            dropped_requests=0,
+            total_monthly_cost_usd=25.0,  # cheaper than all!
+            component_breakdown={},
+        ),
+        "is_feasible": False,
+        "violations": ["p95 latency exceeds SLA"],
+    }
+
+    candidates = [cand_cheap, cand_fast, cand_high_tp, cand_infeasible]
+
+    # 1. MINIMIZE_COST
+    opt_cost = ArchitectureOptimizer(baseline_graph, test_workload, objective=OptimizationObjective.MINIMIZE_COST)
+    ranked_cost = opt_cost._compute_objective_scores([dict(c) for c in candidates])
+    assert ranked_cost[0]["candidate_id"] == "cand-cheap", "Cheapest feasible candidate must be ranked #1"
+    assert ranked_cost[-1]["candidate_id"] == "cand-infeasible", "Infeasible candidate must never outrank feasible ones"
+    assert ranked_cost[0]["rank"] == 1
+    assert ranked_cost[0]["is_feasible"] is True
+
+    # 2. MINIMIZE_LATENCY
+    opt_lat = ArchitectureOptimizer(baseline_graph, test_workload, objective=OptimizationObjective.MINIMIZE_LATENCY)
+    ranked_lat = opt_lat._compute_objective_scores([dict(c) for c in candidates])
+    assert ranked_lat[0]["candidate_id"] == "cand-fast", "Lowest p95 latency feasible candidate must be ranked #1"
+    assert ranked_lat[-1]["candidate_id"] == "cand-infeasible", "Infeasible candidate must never outrank feasible ones"
+
+    # 3. MAXIMIZE_THROUGHPUT
+    opt_tp = ArchitectureOptimizer(baseline_graph, test_workload, objective=OptimizationObjective.MAXIMIZE_THROUGHPUT)
+    ranked_tp = opt_tp._compute_objective_scores([dict(c) for c in candidates])
+    assert ranked_tp[0]["candidate_id"] == "cand-high-tp", "Highest throughput feasible candidate must be ranked #1"
+    assert ranked_tp[-1]["candidate_id"] == "cand-infeasible", "Infeasible candidate must never outrank feasible ones"
+
+    # 4. BALANCED
+    opt_bal = ArchitectureOptimizer(baseline_graph, test_workload, objective=OptimizationObjective.BALANCED)
+    ranked_bal = opt_bal._compute_objective_scores([dict(c) for c in candidates])
+    assert ranked_bal[-1]["candidate_id"] == "cand-infeasible", "Infeasible candidate must be ranked last under balanced"
+    for r in ranked_bal:
+        assert "score" in r and r["score"] is not None
+
+
+def test_changing_objective_changes_recommended_candidate(baseline_graph, test_workload):
+    """Running optimization on the same baseline with different objectives must produce different recommendations
+    when candidates present genuine trade-offs."""
+    # Run under MINIMIZE_COST
+    res_cost = optimize_architecture(
+        architecture=baseline_graph,
+        workload=test_workload,
+        objective=OptimizationObjective.MINIMIZE_COST,
+        max_candidates=6,
+    )
+    assert res_cost.status == "success"
+    rec_cost = res_cost.recommended_candidate
+
+    # Run under MINIMIZE_LATENCY
+    res_lat = optimize_architecture(
+        architecture=baseline_graph,
+        workload=test_workload,
+        objective=OptimizationObjective.MINIMIZE_LATENCY,
+        max_candidates=6,
+    )
+    assert res_lat.status == "success"
+    rec_lat = res_lat.recommended_candidate
+
+    # Cost-minimizing recommendation must be cheaper than or equal to latency-minimizing recommendation
+    assert rec_cost.metrics.total_monthly_cost_usd <= rec_lat.metrics.total_monthly_cost_usd
+
+    # Latency-minimizing recommendation must achieve lower or equal p95 latency than cost-minimizing recommendation
+    assert rec_lat.metrics.p95_latency_ms <= rec_cost.metrics.p95_latency_ms
+
+    # The chosen candidates must be genuinely different
+    assert rec_cost.candidate_id != rec_lat.candidate_id
+
+
+def test_optimizer_strictly_preserves_baseline_and_workload(baseline_graph, test_workload):
+    """The optimizer must preserve baseline architecture and workload inputs without mutating them."""
+    import copy
+
+    original_arch_dict = baseline_graph.model_dump()
+    original_wl_dict = test_workload.model_dump()
+
+    for obj in [
+        OptimizationObjective.MINIMIZE_COST,
+        OptimizationObjective.MINIMIZE_LATENCY,
+        OptimizationObjective.MAXIMIZE_THROUGHPUT,
+        OptimizationObjective.BALANCED,
+    ]:
+        res = optimize_architecture(
+            architecture=baseline_graph,
+            workload=test_workload,
+            objective=obj,
+            max_candidates=4,
+        )
+        assert res.status == "success"
+        assert baseline_graph.model_dump() == original_arch_dict
+        assert test_workload.model_dump() == original_wl_dict
+
+
+def test_all_objectives_supported_via_api():
+    """Verify that all 4 supported objectives are handled properly by the FastAPI endpoint."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+
+    client = TestClient(app)
+
+    path = Path(__file__).resolve().parent.parent / "examples" / "sample_architecture.json"
+    with open(path, "r", encoding="utf-8") as f:
+        arch_data = json.load(f)
+
+    workload_data = {
+        "requests_per_second": 300.0,
+        "read_ratio": 0.8,
+        "duration_seconds": 5.0,
+    }
+
+    objectives = ["minimize_cost", "minimize_latency", "maximize_throughput", "balanced"]
+
+    for obj in objectives:
+        payload = {
+            "architecture": arch_data["architecture"],
+            "workload": workload_data,
+            "objective": obj,
+            "max_candidates": 4,
+        }
+        # Test both v1 and root route alias
+        for endpoint in ["/api/v1/optimization/run", "/api/optimization/run"]:
+            resp = client.post(endpoint, json=payload)
+            assert resp.status_code == 200, f"Failed for {obj} on {endpoint}: {resp.text}"
+            data = resp.json()
+            assert data["objective"] == obj
+            assert data["status"] in ["success", "no_feasible_candidate"]
+            assert "ranked_candidates" in data
+            assert len(data["ranked_candidates"]) > 0
+            for cand in data["ranked_candidates"]:
+                assert "candidate_id" in cand
+                assert "metrics" in cand
+                assert "is_feasible" in cand
+                assert "objective_score" in cand
+                assert "rank" in cand
+

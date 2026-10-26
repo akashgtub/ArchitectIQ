@@ -512,8 +512,54 @@ function initActionButtons() {
   const btnOptimize = document.getElementById('btn-optimize');
   if (btnOptimize) btnOptimize.addEventListener('click', executeOptimization);
 
+  const selectObjective = document.getElementById('select-objective');
+  if (selectObjective) {
+    selectObjective.addEventListener('change', (e) => {
+      const newObjective = e.target.value;
+      if (state.optimizationResult) {
+        state.optimizationResult = null;
+        renderOptimizationResults(null);
+        showAlert(
+          'optimization-alert',
+          `Target objective changed to "${formatObjectiveLabel(newObjective)}". Previous optimization results cleared. Click "Run Optimization Search" to evaluate candidates under this objective.`,
+          'info'
+        );
+      }
+    });
+  }
+
   const btnChaos = document.getElementById('btn-chaos');
   if (btnChaos) btnChaos.addEventListener('click', executeChaosSimulation);
+}
+
+function formatObjectiveLabel(obj) {
+  switch (obj) {
+    case 'minimize_cost':
+      return 'Minimize Infrastructure Cost';
+    case 'minimize_latency':
+      return 'Minimize Latency';
+    case 'maximize_throughput':
+      return 'Maximize Peak Throughput';
+    case 'balanced':
+    default:
+      return 'Balanced (Optimal Trade-off)';
+  }
+}
+
+function formatCandidateScore(objective, scoreVal) {
+  const val = Number(scoreVal);
+  if (isNaN(val)) return 'N/A';
+  switch (objective) {
+    case 'minimize_cost':
+      return `$${val.toFixed(2)}/mo`;
+    case 'minimize_latency':
+      return `${val.toFixed(2)} ms`;
+    case 'maximize_throughput':
+      return `${val.toFixed(1)} RPS`;
+    case 'balanced':
+    default:
+      return `Score: ${val.toFixed(3)}`;
+  }
 }
 
 // 1. Diagram Analysis
@@ -733,7 +779,7 @@ async function executeOptimization() {
 
     state.optimizationResult = res;
     renderOptimizationResults(res);
-    showAlert('optimization-alert', `Evaluated ${res.total_candidates_evaluated} candidates. Best candidate recommended under ${objective} objective.`, 'success');
+    showAlert('optimization-alert', `Evaluated ${res.total_candidates_evaluated} candidates. Best candidate recommended under ${formatObjectiveLabel(res.objective || objective)} objective.`, 'success');
   } catch (err) {
     state.optimizationResult = null;
     renderOptimizationResults(null);
@@ -1024,7 +1070,7 @@ function renderOptimizationResults(res) {
     if (tableBody) {
       tableBody.innerHTML = `
         <tr>
-          <td colspan="6" style="text-align: center; color: var(--text-secondary);">No optimization candidates evaluated yet. Run optimization search to explore alternatives.</td>
+          <td colspan="7" style="text-align: center; color: var(--text-secondary);">No optimization candidates evaluated yet. Run optimization search to explore alternatives.</td>
         </tr>
       `;
     }
@@ -1034,11 +1080,15 @@ function renderOptimizationResults(res) {
   const rec = res.recommended_candidate;
   if (recContainer && rec) {
     const candidateName = rec.name || rec.candidate_id;
+    const activeObj = formatObjectiveLabel(res.objective);
     recContainer.innerHTML = `
       <div class="card" style="border: 1.5px solid var(--color-success); background: #F0FDF4; margin-bottom: 1.5rem;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.5rem;">
-          <h3 style="color: #166534; font-size:1.15rem;">Recommended: ${candidateName}</h3>
-          <span style="display:inline-flex; align-items:center; padding:0.25rem 0.65rem; border-radius:var(--radius-full); font-size:0.78rem; font-weight:700; background: #DCFCE7; color: #15803D;">Rank #1</span>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.5rem; flex-wrap:wrap; gap:0.5rem;">
+          <h3 style="color: #166534; font-size:1.15rem; margin:0;">Recommended: ${candidateName}</h3>
+          <div>
+            <span style="display:inline-flex; align-items:center; padding:0.25rem 0.65rem; border-radius:var(--radius-full); font-size:0.78rem; font-weight:700; background: #DCFCE7; color: #15803D;">Rank #1</span>
+            <span style="display:inline-flex; align-items:center; padding:0.25rem 0.65rem; border-radius:var(--radius-full); font-size:0.78rem; font-weight:700; background:var(--bg-lavender); color:var(--color-primary); border:1px solid var(--border-color); margin-left:0.5rem;">Objective: ${activeObj}</span>
+          </div>
         </div>
         <p style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.75rem;">${rec.description}</p>
         <div class="grid-3">
@@ -1057,7 +1107,7 @@ function renderOptimizationResults(res) {
         </div>
         ${res.trade_off_analysis ? `
           <div style="margin-top: 0.85rem; padding: 0.75rem 1rem; background: var(--bg-main); border-radius: var(--radius-xs); border: 1px solid var(--border-color); font-size: 0.86rem; color: var(--text-main); white-space: pre-line;">
-            <strong>Pareto Trade-off & AI Analysis:</strong>\n${res.trade_off_analysis}
+            <strong>Trade-off & Objective Analysis:</strong>\n${res.trade_off_analysis}
           </div>
         ` : ''}
       </div>
@@ -1068,14 +1118,23 @@ function renderOptimizationResults(res) {
     tableBody.innerHTML = res.ranked_candidates.map((cand, idx) => {
       const cName = cand.name || cand.candidate_id;
       const scoreVal = cand.score !== undefined ? cand.score : (cand.objective_score !== undefined ? cand.objective_score : 1.0);
+      const isFeasible = cand.is_feasible !== false;
+      const feasBadge = isFeasible
+        ? '<span style="display:inline-flex; padding:0.18rem 0.5rem; border-radius:var(--radius-full); font-size:0.75rem; font-weight:700; background:#DCFCE7; color:#15803D;">Feasible</span>'
+        : '<span style="display:inline-flex; padding:0.18rem 0.5rem; border-radius:var(--radius-full); font-size:0.75rem; font-weight:700; background:#FEE2E2; color:#DC2626;">Infeasible</span>';
+
       return `
         <tr>
           <td>#${cand.rank || (idx + 1)}</td>
-          <td><strong style="color:var(--color-deep);">${cName}</strong></td>
+          <td>
+            <strong style="color:var(--color-deep);">${cName}</strong>
+            ${cand.description ? `<div style="font-size:0.78rem; color:var(--text-secondary); margin-top:0.2rem;">${cand.description}</div>` : ''}
+          </td>
+          <td>${feasBadge}</td>
           <td><strong style="color:var(--color-primary);">${cand.metrics.p95_latency_ms.toFixed(1)} ms</strong></td>
           <td>${cand.metrics.throughput_rps.toFixed(0)} RPS</td>
           <td>$${cand.metrics.total_monthly_cost_usd.toFixed(0)}/mo</td>
-          <td><span style="display:inline-flex; padding:0.2rem 0.55rem; border-radius:var(--radius-full); font-size:0.75rem; font-weight:600; background:var(--bg-lavender); color:var(--color-primary); border:1px solid var(--border-color);">Score: ${Number(scoreVal).toFixed(3)}</span></td>
+          <td><span style="display:inline-flex; padding:0.2rem 0.55rem; border-radius:var(--radius-full); font-size:0.75rem; font-weight:600; background:var(--bg-lavender); color:var(--color-primary); border:1px solid var(--border-color);">${formatCandidateScore(scoreVal, res.objective)}</span></td>
         </tr>
       `;
     }).join('');

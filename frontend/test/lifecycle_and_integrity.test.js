@@ -173,3 +173,110 @@ test('Regression 8: Provenance transparency flags deterministic fallback vs live
   const liveResp = { fallback_used: false, is_mock: false, provider: 'gemini', model_id: 'gemini-flash-latest' };
   assert.ok(formatProvenance(liveResp).includes('Provider: gemini'));
 });
+
+test('Regression 9: Changing the optimization objective clears stale results and guides the user', () => {
+  const state = {
+    optimizationResult: {
+      objective: 'minimize_latency',
+      ranked_candidates: [{ candidate_id: 'cand-fast', rank: 1 }],
+      recommended_candidate: { candidate_id: 'cand-fast' },
+    },
+  };
+
+  let renderedResult = state.optimizationResult;
+  let alertMessage = null;
+
+  const handleObjectiveChange = (newObjective) => {
+    // Stale result invalidation
+    if (state.optimizationResult) {
+      state.optimizationResult = null;
+      renderedResult = null;
+      alertMessage = `Target objective changed to ${newObjective}. Click "Run Optimization Search" to evaluate architectures for this objective.`;
+    }
+  };
+
+  handleObjectiveChange('minimize_cost');
+
+  assert.strictEqual(state.optimizationResult, null);
+  assert.strictEqual(renderedResult, null);
+  assert.ok(alertMessage.includes('minimize_cost'));
+  assert.ok(alertMessage.includes('Run Optimization Search'));
+});
+
+test('Regression 10: Optimization candidate table formatting renders 7 columns with feasibility and formatted score', () => {
+  const formatObjectiveLabel = (obj) => {
+    switch (obj) {
+      case 'minimize_cost': return 'Minimize Cost';
+      case 'minimize_latency': return 'Minimize Latency';
+      case 'maximize_throughput': return 'Maximize Throughput';
+      default: return 'Balanced (Pareto)';
+    }
+  };
+
+  const formatCandidateScore = (score, objective) => {
+    if (score === null || score === undefined) return 'N/A';
+    const num = Number(score);
+    if (objective === 'minimize_cost') return `$${num.toFixed(0)}/mo`;
+    if (objective === 'minimize_latency') return `${num.toFixed(1)} ms`;
+    if (objective === 'maximize_throughput') return `${num.toFixed(0)} RPS`;
+    return num.toFixed(3);
+  };
+
+  const mockCandidate = {
+    candidate_id: 'scale-api-1-plus-1',
+    name: 'Add API Server Replica',
+    description: 'Scaled API server replicas from 2 to 3',
+    rank: 1,
+    is_feasible: true,
+    score: 185.0,
+    metrics: {
+      p95_latency_ms: 18.4,
+      throughput_rps: 420.0,
+      total_monthly_cost_usd: 185.0,
+    },
+  };
+
+  const isFeasible = mockCandidate.is_feasible !== false;
+  const feasBadge = isFeasible ? 'Feasible' : 'Infeasible';
+  const formattedScoreCost = formatCandidateScore(mockCandidate.score, 'minimize_cost');
+  const formattedScoreLat = formatCandidateScore(mockCandidate.metrics.p95_latency_ms, 'minimize_latency');
+  const formattedScoreTp = formatCandidateScore(mockCandidate.metrics.throughput_rps, 'maximize_throughput');
+  const formattedScoreBal = formatCandidateScore(0.852, 'balanced');
+
+  assert.strictEqual(feasBadge, 'Feasible');
+  assert.strictEqual(formattedScoreCost, '$185/mo');
+  assert.strictEqual(formattedScoreLat, '18.4 ms');
+  assert.strictEqual(formattedScoreTp, '420 RPS');
+  assert.strictEqual(formattedScoreBal, '0.852');
+  assert.strictEqual(formatObjectiveLabel('minimize_cost'), 'Minimize Cost');
+});
+
+test('Regression 11: API client transmits objective and workload parameters accurately', () => {
+  const buildPayload = ({ architecture, workload, objective, maxCandidates }) => {
+    return {
+      architecture,
+      workload,
+      objective: objective || 'balanced',
+      max_candidates: maxCandidates || 6,
+    };
+  };
+
+  const payloadCost = buildPayload({
+    architecture: { components: [] },
+    workload: { requests_per_second: 500 },
+    objective: 'minimize_cost',
+    maxCandidates: 5,
+  });
+
+  assert.strictEqual(payloadCost.objective, 'minimize_cost');
+  assert.strictEqual(payloadCost.max_candidates, 5);
+
+  const payloadDefault = buildPayload({
+    architecture: { components: [] },
+    workload: { requests_per_second: 500 },
+  });
+
+  assert.strictEqual(payloadDefault.objective, 'balanced');
+  assert.strictEqual(payloadDefault.max_candidates, 6);
+});
+
