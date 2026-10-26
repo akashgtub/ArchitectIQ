@@ -262,7 +262,7 @@ async def api_simulate_failure(payload: ChaosRunRequest) -> FailureSimulationRes
             from backend.ai_agent.providers import get_ai_provider
             ai_provider = get_ai_provider()
             ai_chaos_narrative = await ai_provider.explain_chaos(
-                scenario=payload.scenario,
+                scenario=chaos_res.scenario,
                 baseline_metrics=chaos_res.baseline_metrics,
                 failure_metrics=chaos_res.failure_metrics,
                 affected_components=chaos_res.affected_components,
