@@ -15,6 +15,7 @@ import time
 from typing import Dict, List, Optional, Set, Tuple
 
 from backend.config import settings
+from backend.ai_agent.providers import BaseAIProvider, get_ai_provider
 from backend.integrations.simulator_client import SimulatorClient, SimulatorClientError
 from backend.shared.schemas import (
     Architecture,
@@ -46,6 +47,7 @@ class RootCauseInvestigator:
         simulator_client: Optional[SimulatorClient] = None,
         max_experiments: Optional[int] = None,
         timeout_seconds: Optional[int] = None,
+        ai_provider: Optional[BaseAIProvider] = None,
     ):
         self.simulator_client = simulator_client or SimulatorClient()
         self.max_experiments = (
@@ -54,6 +56,7 @@ class RootCauseInvestigator:
         self.timeout_seconds = (
             timeout_seconds if timeout_seconds is not None else settings.investigation_timeout_seconds
         )
+        self.ai_provider = ai_provider or get_ai_provider()
 
     async def investigate(
         self,
@@ -109,6 +112,10 @@ class RootCauseInvestigator:
                 target_hypothesis=hyp,
             )
 
+            # Ensure architecture is accessible for direct in-process simulation
+            if hasattr(self.simulator_client, "_arch_store"):
+                self.simulator_client._arch_store[baseline.run_id] = architecture
+
             # Execute via simulator client
             try:
                 diag_resp = await self.simulator_client.run_diagnostic(
@@ -147,6 +154,24 @@ class RootCauseInvestigator:
                 evidence_summary.append(
                     f"INSUFFICIENT EVIDENCE: {hyp.title} - Missing data: {'; '.join(hyp.missing_evidence)}."
                 )
+
+        # Synthesize model-based reasoning grounded in actual simulation metrics
+        try:
+            ai_exp = await self.ai_provider.explain_root_cause(
+                architecture=architecture,
+                baseline=baseline,
+                hypotheses=hypotheses,
+                experiments=experiment_ledger,
+                request_id=investigation_id,
+            )
+            if ai_exp and "explanation" in ai_exp:
+                exp_text = ai_exp["explanation"]
+                model_used = ai_exp.get("model", self.ai_provider.model_name)
+                evidence_summary.append(
+                    f"AI ROOT-CAUSE SYNTHESIS [{self.ai_provider.name.upper()} - {model_used}]: {exp_text}"
+                )
+        except Exception as e:
+            logger.warning("AI root-cause synthesis skipped: %s", e)
 
         overall_status = InvestigationStatus.COMPLETED
         if len(experiment_ledger) >= self.max_experiments and any(h.status == HypothesisStatus.CANDIDATE for h in hypotheses):

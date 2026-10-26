@@ -205,6 +205,8 @@ def adapt_m2_simulation_to_m1_baseline(
         warnings=warnings,
         assumptions=sim_result.assumptions,
         simulator_version="sim-v2.1.0",
+        execution_mode="real",
+        engine_name="discrete_event_engine",
     )
 
 
@@ -327,4 +329,6 @@ def run_adapted_diagnostic_experiment(
         diff_from_baseline=diffs,
         warnings=warnings,
         simulator_version="sim-v2.1.0",
+        execution_mode="real",
+        engine_name="discrete_event_engine",
     )

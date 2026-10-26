@@ -231,6 +231,9 @@ class BaselineSimulationResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="Simulation warnings or capacity alerts")
     assumptions: List[str] = Field(default_factory=list, description="Assumptions made by simulator engine")
     simulator_version: Optional[str] = Field(None, description="Version of Member 2 simulator engine")
+    execution_mode: Optional[str] = Field(default="real", description="'real' discrete simulation or 'mock'")
+    engine_name: Optional[str] = Field(default="discrete_event_engine", description="Simulator engine identifier")
+    request_id: Optional[str] = Field(default=None, description="Request correlation identifier")
 
 
 class DiagnosticExperimentRequest(BaseModel):
@@ -275,6 +278,9 @@ class DiagnosticExperimentResponse(BaseModel):
     diff_from_baseline: List[MetricDiff] = Field(default_factory=list, description="Computed metric differences with units")
     warnings: List[str] = Field(default_factory=list, description="Simulation warnings")
     simulator_version: Optional[str] = Field(None, description="Simulator version")
+    execution_mode: Optional[str] = Field(default="real", description="'real' discrete simulation or 'mock'")
+    engine_name: Optional[str] = Field(default="discrete_event_engine", description="Simulator engine identifier")
+    request_id: Optional[str] = Field(default=None, description="Request correlation identifier")
 
 
 # ============================================================================
@@ -440,6 +446,10 @@ class ArchitectureAnalyzeResponse(BaseModel):
     raw_model_response: Optional[str] = None
     model_id: Optional[str] = Field(None, description="Model identifier used for analysis or 'mock-extractor'")
     is_mock: bool = Field(default=False, description="True if analysis was performed via deterministic mock")
+    execution_mode: Optional[str] = Field(default="real", description="'real' or 'mock'")
+    fallback_used: Optional[bool] = Field(default=False, description="True if deterministic fallback was triggered")
+    provider: Optional[str] = Field(default=None, description="AI Provider used ('gemma', 'gemini', 'deterministic_fallback')")
+    request_id: Optional[str] = Field(default=None, description="Request correlation ID")
 
 
 class StartInvestigationRequest(BaseModel):
@@ -458,6 +468,9 @@ class InvestigationDetailResponse(BaseModel):
     root_cause_analysis: Optional[RootCauseAnalysisResult] = None
     handoff_ready: bool = False
     error: Optional[str] = None
+    execution_mode: Optional[str] = Field(default="real", description="'real' or 'mock'")
+    engine_name: Optional[str] = Field(default="discrete_event_engine", description="Simulator engine name")
+    request_id: Optional[str] = Field(default=None, description="Request correlation ID")
 
 
 class ErrorResponse(BaseModel):

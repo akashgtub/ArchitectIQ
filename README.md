@@ -99,9 +99,11 @@ Copy `.env.example` to `.env`:
 cp .env.example .env
 ```
 Key configuration parameters:
-* `GEMINI_API_KEY`: Google Gemini API key. If left blank, the system automatically uses deterministic mock analysis for zero-cost offline development.
-* `GEMINI_MODEL_ID`: Default `gemini-2.0-flash`.
-* `USE_MOCK_SIMULATOR`: When `false`, root-cause investigations invoke Member 2's real simulation engine via the integrated adapter.
+* `AI_PROVIDER`: `auto`, `gemma`, `gemini`, or `deterministic_fallback`.
+* `GEMMA_API_KEY` / `GEMMA_MODEL_ID` / `GEMMA_BASE_URL`: Instruction-tuned Gemma configuration (default `gemma-2-27b-it`) supporting Google AI Studio, Vertex AI, or OpenAI-compatible inference servers (vLLM, Ollama, Groq).
+* `GEMINI_API_KEY` / `GEMINI_MODEL_ID`: Google Gemini configuration (default `gemini-2.0-flash`) for multimodal vision diagram parsing.
+* `USE_MOCK_SIMULATOR`: Defaults to `false` (runs the real discrete simulation engine). Only set to `true` for synthetic mock testing.
+* `ALLOW_AI_FALLBACK`: When `true`, automatically falls back to an explicitly labeled deterministic rule provider if no credentials are configured.
 
 ### 3. Install Frontend Dependencies (Optional for Vite dev)
 ```bash
@@ -127,7 +129,7 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```bash
 python -m pytest backend/tests -v
 ```
-**Results:** **88 passed** (100% success rate across all schema, simulator, optimizer, failure simulator, graph validator, root cause, and API integration tests).
+**Results:** **99 passed** (100% success rate across AI provider selection, Gemma verification, real discrete simulator integration, schema models, optimizer, failure simulator, and graph validation).
 
 ### Run Frontend Test Suite & Production Build
 ```bash

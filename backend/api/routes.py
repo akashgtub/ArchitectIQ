@@ -194,16 +194,31 @@ def api_run_simulation(payload: SimulationRunRequest) -> SimulationResult:
     summary="Optimize architecture candidates",
     tags=["Optimization"],
 )
-def api_optimize_architecture(payload: OptimizationRunRequest) -> OptimizationResult:
+async def api_optimize_architecture(payload: OptimizationRunRequest) -> OptimizationResult:
     """Run candidate generation, multi-candidate simulation, and multi-objective ranking."""
     try:
-        return optimize_architecture(
+        opt_res = optimize_architecture(
             architecture=payload.architecture,
             workload=payload.workload,
             constraints=payload.constraints,
             objective=payload.objective,
             max_candidates=payload.max_candidates,
         )
+        try:
+            from backend.ai_agent.providers import get_ai_provider
+            ai_provider = get_ai_provider()
+            ai_narrative = await ai_provider.explain_optimization(
+                baseline_metrics=opt_res.baseline_metrics,
+                candidates=opt_res.ranked_candidates,
+                recommended=opt_res.recommended_candidate,
+                objective=payload.objective.value if hasattr(payload.objective, "value") else str(payload.objective),
+            )
+            if ai_narrative and len(ai_narrative.strip()) > 0:
+                opt_res.trade_off_analysis = f"{opt_res.trade_off_analysis}\n\n[AI Model Explanation - {ai_provider.name.upper()} ({ai_provider.model_name})]:\n{ai_narrative}"
+        except Exception as ai_err:
+            logger.warning("AI optimization explanation skipped: %s", ai_err)
+
+        return opt_res
     except SimulationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -234,15 +249,31 @@ def api_optimize_architecture(payload: OptimizationRunRequest) -> OptimizationRe
     summary="Run chaos failure resilience simulation",
     tags=["Resilience"],
 )
-def api_simulate_failure(payload: ChaosRunRequest) -> FailureSimulationResult:
+async def api_simulate_failure(payload: ChaosRunRequest) -> FailureSimulationResult:
     """Inject failure scenario and compute resilience comparisons."""
     try:
-        return simulate_failure(
+        chaos_res = simulate_failure(
             architecture=payload.architecture,
             workload=payload.workload,
             scenario=payload.scenario,
             constraints=payload.constraints,
         )
+        try:
+            from backend.ai_agent.providers import get_ai_provider
+            ai_provider = get_ai_provider()
+            ai_chaos_narrative = await ai_provider.explain_chaos(
+                scenario=payload.scenario,
+                baseline_metrics=chaos_res.baseline_metrics,
+                failure_metrics=chaos_res.failure_metrics,
+                affected_components=chaos_res.affected_components,
+                recovered=chaos_res.recovery_observed,
+            )
+            if ai_chaos_narrative and len(ai_chaos_narrative.strip()) > 0:
+                chaos_res.resilience_summary = f"{chaos_res.resilience_summary}\n\n[AI Resilience Analysis - {ai_provider.name.upper()} ({ai_provider.model_name})]:\n{ai_chaos_narrative}"
+        except Exception as ai_err:
+            logger.warning("AI chaos explanation skipped: %s", ai_err)
+
+        return chaos_res
     except SimulationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -536,6 +567,9 @@ async def start_investigation(
     _INVESTIGATIONS_DB[investigation_id]["handoff_ready"] = True
     _INVESTIGATIONS_DB[investigation_id]["status"] = root_cause_result.status
     _INVESTIGATIONS_DB[investigation_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _INVESTIGATIONS_DB[investigation_id]["execution_mode"] = "mock" if (baseline_resp and baseline_resp.is_mock) else "real"
+    _INVESTIGATIONS_DB[investigation_id]["engine_name"] = "deterministic_mock" if (baseline_resp and baseline_resp.is_mock) else "discrete_event_engine"
+    _INVESTIGATIONS_DB[investigation_id]["request_id"] = investigation_id
 
     return InvestigationDetailResponse(
         investigation_id=investigation_id,
@@ -546,6 +580,9 @@ async def start_investigation(
         baseline=baseline_resp,
         root_cause_analysis=root_cause_result,
         handoff_ready=True,
+        execution_mode=_INVESTIGATIONS_DB[investigation_id]["execution_mode"],
+        engine_name=_INVESTIGATIONS_DB[investigation_id]["engine_name"],
+        request_id=investigation_id,
     )
 
 
@@ -576,6 +613,9 @@ async def get_investigation(investigation_id: str):
         root_cause_analysis=record.get("root_cause_analysis"),
         handoff_ready=record.get("handoff_ready", False),
         error=record.get("error"),
+        execution_mode=record.get("execution_mode", "real"),
+        engine_name=record.get("engine_name", "discrete_event_engine"),
+        request_id=record.get("request_id", investigation_id),
     )
 
 

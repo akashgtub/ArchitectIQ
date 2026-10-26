@@ -86,16 +86,21 @@ Return your response in STRICT, VALID JSON following this exact structure:
 """
 
 
-class ModelClientError(Exception):
-    def __init__(self, message: str, code: str = "ERR_MODEL_CLIENT"):
-        super().__init__(message)
-        self.message = message
-        self.code = code
+from backend.ai_agent.providers import (
+    BaseAIProvider,
+    DeterministicFallbackProvider,
+    GeminiProvider,
+    GemmaProvider,
+    ModelClientError,
+    get_ai_provider,
+)
 
 
 class GemmaClient:
     """
-    Client for interacting with Google Gemini API (Gemma / Gemini models).
+    Client for interacting with Google Gemma / Gemini API models.
+    Supports clean BaseAIProvider abstraction, bounded retries,
+    structured JSON extraction, and explicit transparent mock fallback.
     """
 
     def __init__(
@@ -103,24 +108,31 @@ class GemmaClient:
         api_key: Optional[str] = None,
         model_id: Optional[str] = None,
         use_mock: Optional[bool] = None,
+        provider: Optional[BaseAIProvider] = None,
     ):
-        self.api_key = api_key if api_key is not None else settings.gemini_api_key
-        self.model_id = model_id if model_id is not None else settings.gemini_model_id
-        # If API key is empty or use_mock is True, fallback to deterministic mock
-        self.use_mock = use_mock if use_mock is not None else (not bool(self.api_key))
+        if provider:
+            self.provider = provider
+            self.api_key = getattr(provider, "api_key", api_key or settings.gemini_api_key)
+            self.model_id = provider.model_name
+            self.use_mock = provider.name == "deterministic_fallback"
+        else:
+            self.api_key = api_key if api_key is not None else (settings.gemma_api_key or settings.gemini_api_key)
+            self.model_id = model_id if model_id is not None else (
+                settings.gemma_model_id if "gemma" in (settings.ai_provider or "") else settings.gemini_model_id
+            )
+            if use_mock is not None:
+                self.use_mock = use_mock
+            else:
+                self.use_mock = not bool(self.api_key or settings.gemma_base_url)
+
+            if self.use_mock:
+                self.provider = DeterministicFallbackProvider()
+            elif "gemma" in self.model_id.lower() or settings.gemma_base_url or settings.ai_provider == "gemma":
+                self.provider = GemmaProvider(api_key=self.api_key, model_id=self.model_id, base_url=settings.gemma_base_url)
+            else:
+                self.provider = GeminiProvider(api_key=self.api_key, model_id=self.model_id, base_url=settings.gemini_base_url)
+
         self._genai_client = None
-
-        if not self.use_mock:
-            self._init_sdk_client()
-
-    def _init_sdk_client(self):
-        try:
-            from google import genai
-            self._genai_client = genai.Client(api_key=self.api_key)
-            logger.info("Initialized google.genai Client with model: %s", self.model_id)
-        except Exception as e:
-            logger.warning("Could not initialize google.genai client: %s. Using REST / Mock fallback.", str(e))
-            self._genai_client = None
 
     async def extract_architecture(
         self,
@@ -132,35 +144,31 @@ class GemmaClient:
     ) -> Dict[str, Any]:
         """
         Extracts structured architecture from image and requirements.
-        Retries bounded number of times if response is malformed.
+        Uses the configured AI provider with bounded retries.
         """
-        if self.use_mock or not self.api_key:
+        if self.use_mock or self.provider.name == "deterministic_fallback":
             return self._generate_mock_extraction(
                 user_requirements=user_requirements,
                 user_workload=user_workload,
                 user_constraints=user_constraints,
             )
 
-        # Real model invocation with bounded retries
-        last_error = None
-        for attempt in range(1, settings.max_retries + 2):
-            try:
-                response_json = await self._call_model_with_image(
-                    image_bytes=image_bytes,
-                    image_format=image_format,
-                    user_requirements=user_requirements,
-                    user_workload=user_workload,
-                    user_constraints=user_constraints,
-                )
-                return response_json
-            except Exception as e:
-                last_error = e
-                logger.warning("Model extraction attempt %d failed: %s", attempt, str(e))
-
-        raise ModelClientError(
-            f"Failed to extract architecture after {settings.max_retries + 1} attempts: {last_error}",
-            code="ERR_MODEL_EXTRACTION_FAILED",
-        )
+        try:
+            return await self.provider.extract_architecture(
+                image_bytes=image_bytes,
+                image_format=image_format,
+                user_requirements=user_requirements,
+                user_workload=user_workload,
+                user_constraints=user_constraints,
+            )
+        except ModelClientError:
+            raise
+        except Exception as e:
+            logger.warning("AI provider extraction failed: %s", e)
+            raise ModelClientError(
+                f"Failed to extract architecture via provider '{self.provider.name}': {e}",
+                code="ERR_MODEL_EXTRACTION_FAILED",
+            )
 
     async def _call_model_with_image(
         self,

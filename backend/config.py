@@ -14,12 +14,14 @@ from pydantic import BaseModel, Field
 
 
 class Settings(BaseModel):
-    # Gemini / Gemma Model Configuration
+    # AI Provider & Model Configuration
+    # Options: 'auto', 'gemma', 'gemini', 'deterministic_fallback'
+    ai_provider: str = Field(
+        default_factory=lambda: os.getenv("AI_PROVIDER", "auto").lower()
+    )
     gemini_api_key: str = Field(
         default_factory=lambda: os.getenv("GEMINI_API_KEY", "")
     )
-    # Default model with multimodal vision + structured JSON output capability
-    # Can be set to 'gemini-2.0-flash', 'gemini-1.5-flash', or 'gemma-2-27b-it' (text-only)
     gemini_model_id: str = Field(
         default_factory=lambda: os.getenv("GEMINI_MODEL_ID", "gemini-2.0-flash")
     )
@@ -27,7 +29,24 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("GEMINI_BASE_URL", "")
     )
 
-    # Simulator Integration (Member 2 Engine)
+    # Gemma Model Configuration
+    # Supports Google AI Studio, Vertex AI, or OpenAI-compatible inference servers (vLLM, Ollama, Groq)
+    gemma_api_key: str = Field(
+        default_factory=lambda: os.getenv("GEMMA_API_KEY", os.getenv("GEMINI_API_KEY", ""))
+    )
+    gemma_model_id: str = Field(
+        default_factory=lambda: os.getenv("GEMMA_MODEL_ID", "gemma-2-27b-it")
+    )
+    gemma_base_url: str = Field(
+        default_factory=lambda: os.getenv("GEMMA_BASE_URL", "")
+    )
+    allow_ai_fallback: bool = Field(
+        default_factory=lambda: os.getenv("ALLOW_AI_FALLBACK", "true").lower() in ("true", "1", "yes")
+    )
+
+    # Simulator Integration (Member 2 Real Engine)
+    # Default is real simulation engine (use_mock_simulator=False).
+    # Mock mode is only active when explicitly selected (USE_MOCK_SIMULATOR=true).
     simulator_base_url: str = Field(
         default_factory=lambda: os.getenv("SIMULATOR_BASE_URL", "")
     )
@@ -35,7 +54,7 @@ class Settings(BaseModel):
         default_factory=lambda: int(os.getenv("SIMULATOR_TIMEOUT_SECONDS", "30"))
     )
     use_mock_simulator: bool = Field(
-        default_factory=lambda: os.getenv("USE_MOCK_SIMULATOR", "true").lower() in ("true", "1", "yes")
+        default_factory=lambda: os.getenv("USE_MOCK_SIMULATOR", "false").lower() in ("true", "1", "yes")
     )
 
     # Root-Cause Investigation Budget Limits

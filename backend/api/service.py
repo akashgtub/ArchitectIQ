@@ -113,7 +113,12 @@ def run_simulation(
         workload=workload_obj,
         constraints=constraints_obj,
     )
-    return engine.run()
+    result = engine.run()
+    if result.simulation_metadata is None:
+        result.simulation_metadata = {}
+    result.simulation_metadata["execution_mode"] = "real"
+    result.simulation_metadata["engine_name"] = "discrete_event_engine"
+    return result
 
 
 def optimize_architecture(

@@ -51,7 +51,11 @@ class SimulatorUnavailableError(SimulatorClientError):
 class SimulatorClient:
     """
     Adapter for Member 2 simulation engine.
-    Dispatches to real HTTP API if configured, otherwise uses deterministic mock.
+    Defaults to the real physics-based discrete simulation engine.
+    - If base_url is configured, dispatches over HTTP to external simulator service.
+    - If base_url is not set, executes via direct in-process simulation engine.
+    - Mock simulator is only executed when use_mock is explicitly True.
+    - Never silently falls back to mock when the real engine fails.
     """
 
     def __init__(
@@ -62,11 +66,12 @@ class SimulatorClient:
     ):
         self.base_url = (base_url or settings.simulator_base_url).rstrip("/")
         self.timeout_seconds = timeout_seconds or settings.simulator_timeout_seconds
-        # If no base_url is configured, automatically use mock
+        # Explicit mock mode only when explicitly requested; default to real engine
         if use_mock is not None:
             self.use_mock = use_mock
         else:
-            self.use_mock = settings.use_mock_simulator or not bool(self.base_url)
+            self.use_mock = settings.use_mock_simulator
+        self._arch_store: Dict[str, Any] = {}
 
     async def run_baseline(
         self,
@@ -74,24 +79,101 @@ class SimulatorClient:
     ) -> BaselineSimulationResponse:
         """
         Executes baseline simulation for the given architecture.
+        Defaults to real discrete-event simulation engine.
         """
+        self._arch_store[request.run_id] = request.architecture
+
         if self.use_mock:
+            logger.info("Executing baseline simulation in explicit MOCK mode [run_id=%s]", request.run_id)
             return self._run_mock_baseline(request)
 
-        return await self._call_real_baseline(request)
+        if self.base_url:
+            logger.info("Calling external simulator over HTTP at %s [run_id=%s]", self.base_url, request.run_id)
+            return await self._call_real_baseline(request)
+
+        logger.info("Running baseline simulation via in-process real discrete engine [run_id=%s]", request.run_id)
+        return self._run_direct_real_baseline(request)
 
     async def run_diagnostic(
         self,
         request: DiagnosticExperimentRequest,
         baseline: BaselineSimulationResponse,
+        architecture: Optional[Any] = None,
     ) -> DiagnosticExperimentResponse:
         """
         Executes a targeted diagnostic experiment and calculates diffs from baseline.
+        Defaults to real discrete-event simulation engine.
         """
+        arch = architecture or self._arch_store.get(request.baseline_run_id)
+
         if self.use_mock:
+            logger.info("Executing diagnostic experiment in explicit MOCK mode [exp_id=%s]", request.experiment_id)
             return self._run_mock_diagnostic(request, baseline)
 
-        return await self._call_real_diagnostic(request, baseline)
+        if self.base_url:
+            logger.info("Calling external diagnostic simulator over HTTP at %s [exp_id=%s]", self.base_url, request.experiment_id)
+            return await self._call_real_diagnostic(request, baseline)
+
+        logger.info("Running diagnostic experiment via in-process real discrete engine [exp_id=%s]", request.experiment_id)
+        return self._run_direct_real_diagnostic(request, baseline, arch)
+
+    def _run_direct_real_baseline(
+        self,
+        request: BaselineSimulationRequest,
+    ) -> BaselineSimulationResponse:
+        """Direct in-process execution using Member 2's SimulationEngine."""
+        from backend.api.service import run_simulation
+        from backend.shared.adapter import adapt_m1_architecture_to_m2, adapt_m2_simulation_to_m1_baseline
+        from backend.simulator.engine import SimulationError
+
+        try:
+            m2_graph, m2_workload, m2_constraints = adapt_m1_architecture_to_m2(request.architecture)
+            sim_result = run_simulation(
+                architecture=m2_graph,
+                workload=m2_workload,
+                constraints=m2_constraints,
+            )
+            resp = adapt_m2_simulation_to_m1_baseline(request.run_id, sim_result, request.architecture)
+            resp.is_mock = False
+            resp.source = "member2_simulator"
+            return resp
+        except SimulationError as e:
+            logger.error("Real baseline simulation error: %s", e)
+            raise SimulatorClientError(f"Real simulation engine failed: {str(e)}", code="ERR_SIMULATION_FAILED")
+        except ValueError as e:
+            logger.error("Architecture validation error in direct simulation: %s", e)
+            raise SimulatorClientError(f"Architecture validation error: {str(e)}", code="ERR_SIMULATOR_VALIDATION")
+        except Exception as e:
+            logger.exception("Unexpected error in direct baseline simulation: %s", e)
+            raise SimulatorClientError(f"Direct simulation engine error: {str(e)}", code="ERR_SIMULATOR_DIRECT")
+
+    def _run_direct_real_diagnostic(
+        self,
+        request: DiagnosticExperimentRequest,
+        baseline: BaselineSimulationResponse,
+        architecture: Optional[Any],
+    ) -> DiagnosticExperimentResponse:
+        """Direct in-process execution for diagnostic experiments."""
+        from backend.shared.adapter import run_adapted_diagnostic_experiment
+        from backend.simulator.engine import SimulationError
+
+        if not architecture:
+            raise SimulatorClientError(
+                f"Architecture not found for baseline run '{request.baseline_run_id}'. Cannot execute direct diagnostic experiment.",
+                code="ERR_BASELINE_NOT_FOUND",
+            )
+
+        try:
+            resp = run_adapted_diagnostic_experiment(request, baseline, architecture)
+            resp.is_mock = False
+            resp.source = "member2_simulator"
+            return resp
+        except SimulationError as e:
+            logger.error("Real diagnostic simulation error: %s", e)
+            raise SimulatorClientError(f"Real diagnostic simulation failed: {str(e)}", code="ERR_DIAGNOSTIC_FAILED")
+        except Exception as e:
+            logger.exception("Unexpected error in direct diagnostic simulation: %s", e)
+            raise SimulatorClientError(f"Direct diagnostic simulation error: {str(e)}", code="ERR_DIAGNOSTIC_DIRECT")
 
     async def _call_real_baseline(
         self,

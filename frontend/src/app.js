@@ -361,8 +361,8 @@ async function executeDiagramAnalysis() {
       state.currentArchitecture = normalizeArchitectureForSimulation(res.architecture);
       renderTopology();
       const modelNotice = res.is_mock
-        ? ' (Deterministic Fallback: GEMINI_API_KEY not set in environment)'
-        : ` (Model: ${res.model_id || 'Gemini Vision'})`;
+        ? ' (Deterministic Fallback: GEMINI_API_KEY / GEMMA_API_KEY not configured)'
+        : ` (Provider: ${res.provider || 'Gemma/Gemini'}, Model: ${res.model_id || 'gemma-2-27b-it'})`;
       showAlert('upload-alert', `Architecture successfully parsed${modelNotice}! Extracted ${state.currentArchitecture.components.length} components and ${state.currentArchitecture.connections.length} connections with validated topology.`, 'success');
       // Switch to topology tab
       switchTab('tab-topology');
@@ -409,7 +409,8 @@ async function executeBaselineSimulation() {
 
     state.baselineResult = res;
     renderSimulationResults(res);
-    showAlert('simulation-alert', 'Baseline simulation completed successfully with discrete physics engine.', 'success');
+    const modeBadge = res.simulation_metadata?.execution_mode === 'real' ? 'Real Discrete Simulation Engine' : 'Mock Simulator';
+    showAlert('simulation-alert', `Baseline simulation completed successfully [${modeBadge}]. Metrics represent modeled discrete-event estimates, not production measurements.`, 'success');
   } catch (err) {
     showAlert('simulation-alert', `Simulation error: ${err.message}`, 'danger');
   } finally {
@@ -457,7 +458,8 @@ async function executeRootCauseInvestigation() {
 
     state.currentInvestigation = res;
     renderInvestigationResults(res);
-    showAlert('investigation-alert', `Investigation complete! Formulated hypotheses and executed targeted diagnostic experiments.`, 'success');
+    const engineBadge = res.execution_mode === 'mock' ? 'Deterministic Mock' : 'Real Discrete Simulator Engine';
+    showAlert('investigation-alert', `Investigation complete [Engine: ${engineBadge}]! Formulated hypotheses and executed targeted diagnostic experiments.`, 'success');
   } catch (err) {
     showAlert('investigation-alert', `Investigation failed: ${err.message}`, 'danger');
   } finally {
@@ -670,11 +672,11 @@ function renderInvestigationResults(res) {
   }
 
   if (experimentsContainer && rca.experiments) {
-    experimentsContainer.innerHTML = rca.experiments.map(exp => `
+    const experimentsHtml = rca.experiments.map(exp => `
       <div style="background: var(--bg-lavender); padding: 0.85rem 1.15rem; border-radius: var(--radius-sm); margin-bottom: 0.75rem; border: 1px solid var(--border-color);">
         <div style="display:flex; justify-content:space-between; font-size:0.88rem; margin-bottom:0.35rem;">
           <strong style="color:var(--color-deep);">Experiment: ${exp.experiment_id}</strong>
-          <span style="font-family:var(--font-mono); font-weight:600; color:var(--color-primary);">${exp.source}</span>
+          <span style="font-family:var(--font-mono); font-weight:600; color:var(--color-primary);">${exp.source} (${exp.execution_mode || 'real'})</span>
         </div>
         ${exp.diff_from_baseline.map(d => `
           <div style="font-size:0.82rem; margin-top:0.25rem; color:var(--text-main);">
@@ -684,6 +686,17 @@ function renderInvestigationResults(res) {
         `).join('')}
       </div>
     `).join('');
+
+    const summaryHtml = rca.evidence_summary && rca.evidence_summary.length > 0 ? `
+      <div class="card" style="margin-bottom: 1rem; background: #FAF8FF; border: 1px solid var(--border-color);">
+        <strong style="color:var(--color-deep); font-size:0.95rem;">Synthesized Evidence & Root-Cause Summary:</strong>
+        <div style="font-size:0.86rem; color:var(--text-main); margin-top:0.4rem;">
+          ${rca.evidence_summary.map(s => `<p style="margin-bottom:0.35rem; line-height:1.45;">${s}</p>`).join('')}
+        </div>
+      </div>
+    ` : '';
+
+    experimentsContainer.innerHTML = summaryHtml + experimentsHtml;
   }
 }
 
@@ -715,6 +728,11 @@ function renderOptimizationResults(res) {
             <div class="stat-value" style="font-size:1.35rem; color:var(--color-deep);">$${rec.metrics.total_monthly_cost_usd.toFixed(0)}</div>
           </div>
         </div>
+        ${res.trade_off_analysis ? `
+          <div style="margin-top: 0.85rem; padding: 0.75rem 1rem; background: var(--bg-main); border-radius: var(--radius-xs); border: 1px solid var(--border-color); font-size: 0.86rem; color: var(--text-main); white-space: pre-line;">
+            <strong>Pareto Trade-off & AI Analysis:</strong>\n${res.trade_off_analysis}
+          </div>
+        ` : ''}
       </div>
     `;
   }
