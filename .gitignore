@@ -1,13 +1,18 @@
-# Byte-compiled / optimized / DLL files
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Python byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
+
+# Distribution / packaging / builds
 build/
 develop-eggs/
 dist/
@@ -30,12 +35,14 @@ env/
 ENV/
 .venv/
 
-# Testing and coverage
+# Testing, linting, and coverage
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
 .nox/
+.mypy_cache/
+.ruff_cache/
 
 # IDE and editors
 .vscode/
@@ -43,11 +50,14 @@ htmlcov/
 *.swp
 *.swo
 
-# Environment variables & secrets
-.env
-.env.*
-!.env.example
-
 # OS generated files
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# Frontend dependencies and builds
+node_modules/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
