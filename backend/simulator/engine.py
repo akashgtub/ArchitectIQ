@@ -21,9 +21,12 @@ from backend.simulator.schemas import (
     ComponentType,
     Connection,
     Constraints,
+    FailureScenario,
+    FailureType,
     PathType,
     SimulationResult,
     WorkloadConfig,
+    WorkloadPattern,
 )
 from backend.simulator.workload import SimulatedRequest, WorkloadGenerator
 
@@ -41,10 +44,12 @@ class SimulationEngine:
         graph: ArchitectureGraph,
         workload: WorkloadConfig,
         constraints: Optional[Constraints] = None,
+        failure_scenario: Optional[FailureScenario] = None,
     ) -> None:
         self.graph = graph
         self.workload = workload
         self.constraints = constraints
+        self.failure_scenario = failure_scenario
         self._validate_topology()
 
     def _validate_topology(self) -> None:
@@ -93,6 +98,19 @@ class SimulationEngine:
                 "Every component must be reachable from an entry point."
             )
 
+        if self.failure_scenario:
+            sc = self.failure_scenario
+            if sc.failure_type != FailureType.TRAFFIC_SPIKE:
+                if not sc.target_component_id:
+                    raise SimulationError(
+                        f"Failure scenario '{sc.name}' of type '{sc.failure_type.value}' requires a target_component_id."
+                    )
+                if not self.graph.get_component(sc.target_component_id):
+                    raise SimulationError(
+                        f"Target component '{sc.target_component_id}' in failure scenario '{sc.name}' "
+                        f"does not exist in architecture graph: {[c.id for c in self.graph.components]}"
+                    )
+
     def _calculate_queue_wait_ms(
         self,
         component: Component,
@@ -135,7 +153,17 @@ class SimulationEngine:
 
     def run(self) -> SimulationResult:
         """Execute the discrete-event simulation and return structured performance metrics."""
-        workload_gen = WorkloadGenerator(self.workload)
+        # Support traffic spike fault scenario
+        if self.failure_scenario and self.failure_scenario.failure_type == FailureType.TRAFFIC_SPIKE:
+            workload_cfg = self.workload.model_copy()
+            workload_cfg.pattern = WorkloadPattern.BURST
+            workload_cfg.burst_multiplier = max(1.0, self.failure_scenario.degradation_factor)
+            workload_cfg.burst_start_sec = self.failure_scenario.start_time_sec
+            workload_cfg.burst_duration_sec = self.failure_scenario.duration_sec or 10.0
+            workload_gen = WorkloadGenerator(workload_cfg)
+        else:
+            workload_gen = WorkloadGenerator(self.workload)
+
         requests = workload_gen.generate_requests()
 
         # Deterministic RNG for stochastic routing & cache hits
@@ -168,6 +196,15 @@ class SimulationEngine:
             t = req.arrival_time
             current_rate = workload_gen.get_rate_at(t)
 
+            # Check if fault scenario is active at time t
+            fault_active = False
+            if self.failure_scenario:
+                sc = self.failure_scenario
+                t_start = sc.start_time_sec
+                t_end = t_start + sc.duration_sec if sc.duration_sec is not None else float("inf")
+                if t_start <= t < t_end:
+                    fault_active = True
+
             # Pick entry point (balanced round-robin / uniform)
             entry_id = entry_point_ids[req.request_id % len(entry_point_ids)]
             curr_component = self.graph.get_component(entry_id)
@@ -189,6 +226,43 @@ class SimulationEngine:
                 else:
                     eff_capacity = curr_component.capacity_rps * curr_component.replicas
 
+                svc_time = curr_component.base_latency_ms
+
+                # Inject fault dynamics if active for this component
+                if fault_active and self.failure_scenario and self.failure_scenario.target_component_id == c_id:
+                    sc = self.failure_scenario
+                    if sc.failure_type == FailureType.API_CRASH:
+                        if curr_component.replicas <= 1:
+                            stats["dropped_count"] += 1
+                            req.mark_dropped(c_id, f"Component '{c_id}' crashed (0 active replicas)")
+                            dropped = True
+                            break
+                        else:
+                            eff_capacity = curr_component.capacity_rps * (curr_component.replicas - 1)
+                    elif sc.failure_type == FailureType.REPLICA_LOSS:
+                        loss = max(1, int(round(curr_component.replicas * sc.degradation_factor))) if sc.degradation_factor < 1.0 else int(sc.degradation_factor)
+                        remaining = max(0, curr_component.replicas - loss)
+                        if remaining == 0:
+                            stats["dropped_count"] += 1
+                            req.mark_dropped(c_id, f"All replicas lost on '{c_id}'")
+                            dropped = True
+                            break
+                        eff_capacity = curr_component.capacity_rps * remaining
+                    elif sc.failure_type == FailureType.DB_SLOWDOWN:
+                        svc_time *= max(1.0, sc.degradation_factor)
+                    elif sc.failure_type == FailureType.DB_OUTAGE:
+                        stats["dropped_count"] += 1
+                        req.mark_dropped(c_id, f"Database outage on '{c_id}'")
+                        dropped = True
+                        break
+                    elif sc.failure_type == FailureType.TIMEOUT:
+                        stats["dropped_count"] += 1
+                        req.mark_dropped(c_id, f"Client timeout exceeded on '{c_id}'")
+                        dropped = True
+                        break
+                    elif sc.failure_type == FailureType.LATENCY_INCREASE:
+                        svc_time *= max(1.0, sc.degradation_factor)
+
                 # Check queue overflow
                 if stats["current_queue"] >= curr_component.max_queue_size:
                     stats["dropped_count"] += 1
@@ -196,8 +270,6 @@ class SimulationEngine:
                     dropped = True
                     break
 
-                # Calculate service time & queue delay
-                svc_time = curr_component.base_latency_ms
                 # Add slight write overhead for database persistence (1.25x base)
                 if curr_component.type == ComponentType.DATABASE and not req.is_read:
                     svc_time *= 1.25
@@ -231,8 +303,18 @@ class SimulationEngine:
 
                 # Handle Cache Semantics
                 if curr_component.type == ComponentType.CACHE and req.is_read:
-                    hit_ratio = curr_component.cache_hit_ratio or 0.8
-                    is_hit = sim_rng.random_sample() < hit_ratio
+                    if (
+                        fault_active
+                        and self.failure_scenario
+                        and self.failure_scenario.failure_type == FailureType.CACHE_OUTAGE
+                        and (self.failure_scenario.target_component_id == c_id or not self.failure_scenario.target_component_id)
+                    ):
+                        # Cache outage: 100% cache miss, all reads propagate downstream to DB
+                        is_hit = False
+                    else:
+                        hit_ratio = curr_component.cache_hit_ratio or 0.8
+                        is_hit = sim_rng.random_sample() < hit_ratio
+
                     if is_hit:
                         # Cache hit: request completes at cache, skips downstream database
                         break
@@ -305,7 +387,7 @@ class SimulationEngine:
 
         return SimulationResult(
             status=status,
-            simulation_type="baseline",
+            simulation_type="chaos_resilience" if self.failure_scenario else "baseline",
             metrics=metrics,
             bottlenecks=bottlenecks,
             constraint_violations=violations,
