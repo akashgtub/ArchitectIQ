@@ -1,0 +1,1 @@
+"""ArchitectIQ test suite package."""
