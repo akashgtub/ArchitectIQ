@@ -23,12 +23,49 @@ from backend.simulator.schemas import (
 )
 
 
+TYPE_NORMALIZATION: Dict[str, str] = {
+    "gateway": "load_balancer",
+    "web_server": "api_server",
+    "microservice": "api_server",
+    "worker": "api_server",
+    "cdn": "cache",
+    "message_queue": "queue",
+    "object_storage": "storage",
+    "external_service": "third_party_service",
+    "unknown": "api_server",
+}
+
+
 def _coerce_architecture(arch: Union[ArchitectureGraph, Dict[str, Any]]) -> ArchitectureGraph:
     """Ensure architecture is a valid ArchitectureGraph instance."""
     if isinstance(arch, ArchitectureGraph):
         return arch
     if isinstance(arch, dict):
-        return ArchitectureGraph(**arch)
+        import copy
+        data = copy.deepcopy(arch)
+        if "components" in data and isinstance(data["components"], list):
+            normalized_components = []
+            for comp in data["components"]:
+                if isinstance(comp, dict):
+                    c = dict(comp)
+                    raw_type = str(c.get("type", "api_server")).lower()
+                    c["type"] = TYPE_NORMALIZATION.get(raw_type, raw_type)
+                    attrs = c.get("attributes") or {}
+                    if "capacity_rps" not in c or c["capacity_rps"] is None:
+                        default_cap = 5000.0 if c["type"] == "load_balancer" else (8000.0 if c["type"] == "cache" else (800.0 if c["type"] == "database" else 1200.0))
+                        c["capacity_rps"] = float(attrs.get("capacity_rps", default_cap))
+                    if "replicas" not in c or c["replicas"] is None:
+                        c["replicas"] = int(attrs.get("replicas", attrs.get("instances", 1)))
+                    if "base_latency_ms" not in c or c["base_latency_ms"] is None:
+                        default_lat = 2.0 if c["type"] == "load_balancer" else (1.5 if c["type"] == "cache" else (25.0 if c["type"] == "database" else 12.0))
+                        c["base_latency_ms"] = float(attrs.get("base_latency_ms", default_lat))
+                    if "cost_per_month_usd" not in c or c["cost_per_month_usd"] is None:
+                        c["cost_per_month_usd"] = float(attrs.get("cost_per_month_usd", 0.0))
+                    normalized_components.append(c)
+                else:
+                    normalized_components.append(comp)
+            data["components"] = normalized_components
+        return ArchitectureGraph(**data)
     raise ValueError(f"Expected ArchitectureGraph or dict, got {type(arch).__name__}")
 
 

@@ -37,12 +37,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ArchPilot AI - The Self-Testing System Design Agent",
+    title="ArchitectIQ — Autonomous System Architecture Analysis & Simulation Agent",
     description=(
-        "Member 1: Architecture Understanding & Root-Cause Investigation. "
-        "Interprets architecture diagrams, validates system topology, "
-        "orchestrates baseline simulations, diagnoses bottlenecks, and produces "
-        "evidence-based handoffs for Member 2 optimization."
+        "Unified autonomous AI agent for architecture diagram understanding, "
+        "graph validation, discrete-event simulation, deterministic optimization, "
+        "and chaos resilience testing."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -79,15 +78,6 @@ elif frontend_src.is_dir() and (frontend_src / "index.html").is_file():
     @app.get("/", tags=["Frontend"])
     async def serve_frontend():
         return FileResponse(str(frontend_src / "index.html"))
-
-@app.get("/health", tags=["System"])
-async def root_health():
-    return {
-        "status": "healthy",
-        "service": "ArchitectIQ",
-        "schema_version": SCHEMA_VERSION,
-    }
-
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

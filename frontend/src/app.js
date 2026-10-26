@@ -65,6 +65,87 @@ const PRESET_ARCHITECTURES = {
   }
 };
 
+// Component Type Mapping and Normalization for Member 1 <-> Member 2 consistency
+const TYPE_MAP = {
+  gateway: 'load_balancer',
+  web_server: 'api_server',
+  microservice: 'api_server',
+  worker: 'api_server',
+  cdn: 'cache',
+  message_queue: 'queue',
+  object_storage: 'storage',
+  external_service: 'third_party_service',
+  unknown: 'api_server',
+};
+
+function normalizeArchitectureForSimulation(arch) {
+  if (!arch || !arch.components) return arch;
+  const uniqueCompIds = new Set();
+  const components = [];
+
+  for (const c of arch.components) {
+    if (!c.id || uniqueCompIds.has(c.id)) continue;
+    uniqueCompIds.add(c.id);
+
+    const normType = TYPE_MAP[c.type] || c.type || 'api_server';
+    const attrs = c.attributes || {};
+    const replicas = Number(c.replicas || attrs.replicas || attrs.instances || 1);
+
+    let defaultCap = 1200;
+    let defaultLat = 12.0;
+    let defaultCost = 40.0;
+    if (normType === 'load_balancer') { defaultCap = 5000; defaultLat = 2.0; defaultCost = 25.0; }
+    else if (normType === 'cache') { defaultCap = 8000; defaultLat = 1.5; defaultCost = 60.0; }
+    else if (normType === 'database') { defaultCap = 800; defaultLat = 25.0; defaultCost = 120.0; }
+    else if (normType === 'queue' || normType === 'message_broker') { defaultCap = 4000; defaultLat = 4.0; defaultCost = 35.0; }
+
+    const capacity_rps = Number(c.capacity_rps || attrs.capacity_rps || defaultCap);
+    const base_latency_ms = Number(c.base_latency_ms || attrs.base_latency_ms || defaultLat);
+    const cost_per_month_usd = Number(c.cost_per_month_usd || attrs.cost_per_month_usd || (defaultCost * replicas));
+    const cache_hit_ratio = (normType === 'cache')
+      ? Number(c.cache_hit_ratio !== undefined && c.cache_hit_ratio !== null ? c.cache_hit_ratio : (attrs.cache_hit_ratio !== undefined ? attrs.cache_hit_ratio : 0.8))
+      : null;
+
+    components.push({
+      id: c.id,
+      type: normType,
+      name: c.name || c.id,
+      capacity_rps,
+      replicas,
+      base_latency_ms,
+      cost_per_month_usd,
+      cache_hit_ratio,
+    });
+  }
+
+  // Deduplicate connections and verify valid endpoints
+  const seenConns = new Set();
+  const connections = [];
+  for (const conn of (arch.connections || [])) {
+    if (!conn.source || !conn.target || !uniqueCompIds.has(conn.source) || !uniqueCompIds.has(conn.target) || conn.source === conn.target) {
+      continue;
+    }
+    const key = `${conn.source}->${conn.target}`;
+    if (seenConns.has(key)) continue;
+    seenConns.add(key);
+
+    const attrs = conn.attributes || {};
+    connections.push({
+      source: conn.source,
+      target: conn.target,
+      protocol: conn.protocol || attrs.protocol || 'http',
+      latency_overhead_ms: Number(conn.latency_overhead_ms || attrs.latency_overhead_ms || 1.0),
+      path_type: conn.path_type || 'both',
+    });
+  }
+
+  return {
+    ...arch,
+    components,
+    connections,
+  };
+}
+
 // Global Application State
 const state = {
   currentArchitecture: PRESET_ARCHITECTURES.ecommerce,
@@ -109,12 +190,12 @@ async function checkBackendHealth() {
   try {
     const health = await api.checkHealth();
     if (statusDot && statusText) {
-      statusDot.style.background = '#10b981';
-      statusText.textContent = `Backend Connected (${health.schema_version || 'v1.0'})`;
+      statusDot.style.background = '#16A34A';
+      statusText.textContent = `Connected (v${health.schema_version || '1.0'})`;
     }
   } catch (err) {
     if (statusDot && statusText) {
-      statusDot.style.background = '#f43f5e';
+      statusDot.style.background = '#DC2626';
       statusText.textContent = 'Backend Offline';
     }
     showAlert('global-alert', `Backend service connection warning: ${err.message}. Ensure backend is running on port 8000.`, 'warning');
@@ -186,11 +267,33 @@ function initUploadDropzone() {
 }
 
 function handleFileSelected(file) {
-  state.selectedFile = file;
+  hideAlert('upload-alert');
   const dropzoneText = document.getElementById('dropzone-filename');
+
+  const validFormats = ['image/png', 'image/jpeg', 'image/webp'];
+  const ext = file.name ? file.name.split('.').pop().toLowerCase() : '';
+  const isFormatValid = validFormats.includes(file.type) || ['png', 'jpg', 'jpeg', 'webp'].includes(ext);
+
+  if (!isFormatValid) {
+    showAlert('upload-alert', `Invalid image format '${file.type || ext}'. Please upload a valid PNG, JPEG, or WEBP diagram.`, 'danger');
+    if (dropzoneText) dropzoneText.textContent = 'Upload rejected: Unsupported format (PNG, JPEG, WEBP allowed)';
+    state.selectedFile = null;
+    return;
+  }
+
+  const maxBytes = 10 * 1024 * 1024; // 10MB
+  if (file.size > maxBytes) {
+    showAlert('upload-alert', `Image size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds maximum allowed 10 MB limit.`, 'danger');
+    if (dropzoneText) dropzoneText.textContent = 'Upload rejected: File size exceeds 10MB';
+    state.selectedFile = null;
+    return;
+  }
+
+  state.selectedFile = file;
   if (dropzoneText) {
     dropzoneText.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
   }
+  showAlert('upload-alert', `Image "${file.name}" ready for analysis. Click "Analyze & Parse Architecture" below.`, 'info');
 }
 
 // ============================================================================
@@ -255,9 +358,12 @@ async function executeDiagramAnalysis() {
     });
 
     if (res.architecture) {
-      state.currentArchitecture = res.architecture;
+      state.currentArchitecture = normalizeArchitectureForSimulation(res.architecture);
       renderTopology();
-      showAlert('upload-alert', `Architecture successfully parsed! Extracted ${res.architecture.components.length} components and ${res.architecture.connections.length} connections.`, 'success');
+      const modelNotice = res.is_mock
+        ? ' (Deterministic Fallback: GEMINI_API_KEY not set in environment)'
+        : ` (Model: ${res.model_id || 'Gemini Vision'})`;
+      showAlert('upload-alert', `Architecture successfully parsed${modelNotice}! Extracted ${state.currentArchitecture.components.length} components and ${state.currentArchitecture.connections.length} connections with validated topology.`, 'success');
       // Switch to topology tab
       switchTab('tab-topology');
     } else {
@@ -277,7 +383,7 @@ async function executeBaselineSimulation() {
   hideAlert('simulation-alert');
 
   try {
-    const arch = state.currentArchitecture;
+    const arch = normalizeArchitectureForSimulation(state.currentArchitecture);
     const rps = parseFloat(document.getElementById('input-rps')?.value || arch.workload.requests_per_second);
     const readRatio = parseFloat(document.getElementById('input-read-ratio')?.value || arch.workload.read_ratio);
 
@@ -303,7 +409,7 @@ async function executeBaselineSimulation() {
 
     state.baselineResult = res;
     renderSimulationResults(res);
-    showAlert('simulation-alert', 'Baseline simulation completed successfully with deterministic physics engine.', 'success');
+    showAlert('simulation-alert', 'Baseline simulation completed successfully with discrete physics engine.', 'success');
   } catch (err) {
     showAlert('simulation-alert', `Simulation error: ${err.message}`, 'danger');
   } finally {
@@ -318,7 +424,7 @@ async function executeRootCauseInvestigation() {
   hideAlert('investigation-alert');
 
   try {
-    const arch = state.currentArchitecture;
+    const arch = normalizeArchitectureForSimulation(state.currentArchitecture);
     // Ensure workload format matches Member 1 canonical schema
     const m1Arch = {
       schema_version: "1.0",
@@ -366,7 +472,7 @@ async function executeOptimization() {
   hideAlert('optimization-alert');
 
   try {
-    const arch = state.currentArchitecture;
+    const arch = normalizeArchitectureForSimulation(state.currentArchitecture);
     const objective = document.getElementById('select-objective')?.value || 'balanced';
 
     const workloadConfig = {
@@ -400,7 +506,7 @@ async function executeChaosSimulation() {
   hideAlert('chaos-alert');
 
   try {
-    const arch = state.currentArchitecture;
+    const arch = normalizeArchitectureForSimulation(state.currentArchitecture);
     const failureType = document.getElementById('select-chaos-type')?.value || 'db_slowdown';
     const targetComp = document.getElementById('select-chaos-target')?.value || (arch.components[1] ? arch.components[1].id : arch.components[0].id);
 
@@ -445,7 +551,7 @@ function renderTopology() {
   const chaosSelect = document.getElementById('select-chaos-target');
   if (!container) return;
 
-  const arch = state.currentArchitecture;
+  const arch = normalizeArchitectureForSimulation(state.currentArchitecture);
   container.innerHTML = '';
 
   if (chaosSelect) {
@@ -460,7 +566,7 @@ function renderTopology() {
         <span class="comp-id">${comp.id}</span>
         <span class="comp-type-badge ${comp.type}">${comp.type}</span>
       </div>
-      <div style="font-size: 0.85rem; font-weight: 500; color: #cbd5e1;">${comp.name || comp.id}</div>
+      <div style="font-size: 0.92rem; font-weight: 700; color: var(--color-deep); margin-top: 0.25rem;">${comp.name || comp.id}</div>
       <div class="comp-stats">
         <div>Capacity: <strong>${comp.capacity_rps} RPS</strong> &times; ${comp.replicas} replica(s)</div>
         <div>Base Latency: <strong>${comp.base_latency_ms} ms</strong></div>
@@ -481,8 +587,8 @@ function renderTopology() {
   const connSummary = document.getElementById('connection-summary');
   if (connSummary) {
     connSummary.innerHTML = arch.connections.map(c => `
-      <span style="display:inline-block; padding: 0.25rem 0.6rem; background: rgba(255,255,255,0.04); border-radius: 4px; font-size: 0.8rem; margin: 0.2rem;">
-        <code>${c.source}</code> &rarr; <code>${c.target}</code> <small style="color:var(--text-muted)">(${c.protocol || 'http'})</small>
+      <span style="display:inline-flex; align-items:center; gap:0.35rem; padding: 0.3rem 0.75rem; background: var(--bg-lavender); border: 1px solid var(--border-color); border-radius: var(--radius-xs); font-size: 0.85rem; margin: 0.25rem; color: var(--color-deep); font-weight: 500;">
+        <code>${c.source}</code> &rarr; <code>${c.target}</code> <small style="color:var(--text-secondary)">(${c.protocol || 'http'})</small>
       </span>
     `).join('');
   }
@@ -508,10 +614,10 @@ function renderSimulationResults(res) {
       const utilPct = Math.min(100, (cm.utilization * 100)).toFixed(1);
       const isOverloaded = cm.utilization >= 0.8;
       return `
-        <div style="margin-bottom: 0.85rem;">
-          <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:0.25rem;">
-            <span><strong>${id}</strong> <small style="color:var(--text-muted)">(${cm.component_type})</small></span>
-            <span style="font-family:var(--font-mono); color:${isOverloaded ? 'var(--accent-amber)' : 'inherit'}">${utilPct}% CPU | ${cm.total_latency_ms.toFixed(1)}ms</span>
+        <div style="margin-bottom: 0.95rem;">
+          <div style="display:flex; justify-content:space-between; font-size:0.88rem; margin-bottom:0.25rem;">
+            <span><strong>${id}</strong> <small style="color:var(--text-secondary)">(${cm.component_type})</small></span>
+            <span style="font-family:var(--font-mono); font-weight:600; color:${isOverloaded ? 'var(--color-warning)' : 'var(--color-deep)'}">${utilPct}% CPU | ${cm.total_latency_ms.toFixed(1)}ms</span>
           </div>
           <div class="progress-bar-bg">
             <div class="progress-bar-fill ${isOverloaded ? 'warning' : ''}" style="width: ${utilPct}%"></div>
@@ -528,7 +634,7 @@ function renderSimulationResults(res) {
         <div class="alert alert-warning" style="margin-bottom: 0.5rem;">
           <div>
             <strong>${b.component_id}</strong> (${b.severity.toUpperCase()}): ${b.reason}
-            <div style="font-size:0.8rem; margin-top:0.2rem; color:#fef3c7;">Mitigation: ${b.recommended_action}</div>
+            <div style="font-size:0.82rem; margin-top:0.25rem;">Mitigation: ${b.recommended_action}</div>
           </div>
         </div>
       `).join('');
@@ -549,13 +655,13 @@ function renderInvestigationResults(res) {
     hypothesesContainer.innerHTML = rca.hypotheses.map(hyp => {
       const isConfirmed = hyp.status === 'confirmed';
       return `
-        <div class="card" style="margin-bottom: 1rem; border-left: 4px solid ${isConfirmed ? 'var(--accent-emerald)' : 'var(--accent-amber)'};">
+        <div class="card" style="margin-bottom: 1rem; border-left: 4px solid ${isConfirmed ? 'var(--color-success)' : 'var(--color-warning)'};">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.4rem;">
-            <h4 style="font-size: 1rem;">${hyp.title}</h4>
-            <span class="status-badge" style="background:${isConfirmed ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)'}">${hyp.status.toUpperCase()}</span>
+            <h4 style="font-size: 1rem; color: var(--color-deep);">${hyp.title}</h4>
+            <span style="display:inline-flex; align-items:center; padding:0.25rem 0.65rem; border-radius:var(--radius-full); font-size:0.75rem; font-weight:700; background:${isConfirmed ? 'var(--color-success-bg)' : 'var(--color-warning-bg)'}; color:${isConfirmed ? 'var(--color-success)' : 'var(--color-warning)'};">${hyp.status.toUpperCase()}</span>
           </div>
-          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">${hyp.description}</p>
-          <div style="font-size: 0.8rem; color: #a5b4fc;">
+          <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 0.6rem;">${hyp.description}</p>
+          <div style="font-size: 0.82rem; color: var(--color-primary); font-weight: 500;">
             Confidence: <strong>${hyp.confidence_label.toUpperCase()}</strong> | Affected: <code>${hyp.affected_components.join(', ')}</code>
           </div>
         </div>
@@ -565,15 +671,15 @@ function renderInvestigationResults(res) {
 
   if (experimentsContainer && rca.experiments) {
     experimentsContainer.innerHTML = rca.experiments.map(exp => `
-      <div style="background: rgba(255,255,255,0.02); padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 0.75rem; border: 1px solid var(--border-glass);">
-        <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:0.25rem;">
-          <strong>Experiment: ${exp.experiment_id}</strong>
-          <span style="font-family:var(--font-mono); color:var(--accent-cyan);">${exp.source}</span>
+      <div style="background: var(--bg-lavender); padding: 0.85rem 1.15rem; border-radius: var(--radius-sm); margin-bottom: 0.75rem; border: 1px solid var(--border-color);">
+        <div style="display:flex; justify-content:space-between; font-size:0.88rem; margin-bottom:0.35rem;">
+          <strong style="color:var(--color-deep);">Experiment: ${exp.experiment_id}</strong>
+          <span style="font-family:var(--font-mono); font-weight:600; color:var(--color-primary);">${exp.source}</span>
         </div>
         ${exp.diff_from_baseline.map(d => `
-          <div style="font-size:0.8rem; margin-top:0.25rem;">
+          <div style="font-size:0.82rem; margin-top:0.25rem; color:var(--text-main);">
             &bull; <strong>${d.metric_name}:</strong> Baseline: ${d.baseline_value}${d.unit} &rarr; Diagnostic: ${d.diagnostic_value}${d.unit}
-            (${d.diff_pct !== null ? `${d.diff_pct > 0 ? '+' : ''}${d.diff_pct}%` : ''}) - <span style="color:var(--text-muted)">${d.interpretation}</span>
+            (${d.diff_pct !== null ? `${d.diff_pct > 0 ? '+' : ''}${d.diff_pct}%` : ''}) - <span style="color:var(--text-secondary)">${d.interpretation}</span>
           </div>
         `).join('')}
       </div>
@@ -587,25 +693,26 @@ function renderOptimizationResults(res) {
 
   const rec = res.recommended_candidate;
   if (recContainer && rec) {
+    const candidateName = rec.name || rec.candidate_id;
     recContainer.innerHTML = `
-      <div class="card" style="border: 1px solid var(--accent-emerald); background: rgba(16, 185, 129, 0.05); margin-bottom: 1.5rem;">
+      <div class="card" style="border: 1.5px solid var(--color-success); background: #F0FDF4; margin-bottom: 1.5rem;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.5rem;">
-          <h3 style="color: var(--accent-emerald);">Recommended: ${rec.name}</h3>
-          <span class="status-badge" style="background: rgba(16, 185, 129, 0.2); color:#6ee7b7;">Rank #1</span>
+          <h3 style="color: #166534; font-size:1.15rem;">Recommended: ${candidateName}</h3>
+          <span style="display:inline-flex; align-items:center; padding:0.25rem 0.65rem; border-radius:var(--radius-full); font-size:0.78rem; font-weight:700; background: #DCFCE7; color: #15803D;">Rank #1</span>
         </div>
-        <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:0.75rem;">${rec.description}</p>
+        <p style="font-size:0.9rem; color:var(--text-main); margin-bottom:0.75rem;">${rec.description}</p>
         <div class="grid-3">
-          <div class="stat-card" style="background:transparent; padding:0.5rem;">
+          <div class="stat-card" style="background:var(--bg-main); padding:0.75rem 1rem;">
             <div class="stat-header">p95 Latency</div>
-            <div class="stat-value" style="font-size:1.3rem;">${rec.metrics.p95_latency_ms.toFixed(1)} ms</div>
+            <div class="stat-value" style="font-size:1.35rem; color:var(--color-deep);">${rec.metrics.p95_latency_ms.toFixed(1)} ms</div>
           </div>
-          <div class="stat-card" style="background:transparent; padding:0.5rem;">
+          <div class="stat-card" style="background:var(--bg-main); padding:0.75rem 1rem;">
             <div class="stat-header">Throughput</div>
-            <div class="stat-value" style="font-size:1.3rem;">${rec.metrics.throughput_rps.toFixed(0)} RPS</div>
+            <div class="stat-value" style="font-size:1.35rem; color:var(--color-deep);">${rec.metrics.throughput_rps.toFixed(0)} RPS</div>
           </div>
-          <div class="stat-card" style="background:transparent; padding:0.5rem;">
+          <div class="stat-card" style="background:var(--bg-main); padding:0.75rem 1rem;">
             <div class="stat-header">Monthly Cost</div>
-            <div class="stat-value" style="font-size:1.3rem;">$${rec.metrics.total_monthly_cost_usd.toFixed(0)}</div>
+            <div class="stat-value" style="font-size:1.35rem; color:var(--color-deep);">$${rec.metrics.total_monthly_cost_usd.toFixed(0)}</div>
           </div>
         </div>
       </div>
@@ -613,16 +720,20 @@ function renderOptimizationResults(res) {
   }
 
   if (tableBody && res.ranked_candidates) {
-    tableBody.innerHTML = res.ranked_candidates.map((cand, idx) => `
-      <tr>
-        <td>#${idx + 1}</td>
-        <td><strong>${cand.name}</strong></td>
-        <td>${cand.metrics.p95_latency_ms.toFixed(1)} ms</td>
-        <td>${cand.metrics.throughput_rps.toFixed(0)} RPS</td>
-        <td>$${cand.metrics.total_monthly_cost_usd.toFixed(0)}/mo</td>
-        <td><span class="status-badge" style="background:rgba(255,255,255,0.06)">Score: ${cand.score.toFixed(3)}</span></td>
-      </tr>
-    `).join('');
+    tableBody.innerHTML = res.ranked_candidates.map((cand, idx) => {
+      const cName = cand.name || cand.candidate_id;
+      const scoreVal = cand.score !== undefined ? cand.score : (cand.objective_score !== undefined ? cand.objective_score : 1.0);
+      return `
+        <tr>
+          <td>#${cand.rank || (idx + 1)}</td>
+          <td><strong style="color:var(--color-deep);">${cName}</strong></td>
+          <td><strong style="color:var(--color-primary);">${cand.metrics.p95_latency_ms.toFixed(1)} ms</strong></td>
+          <td>${cand.metrics.throughput_rps.toFixed(0)} RPS</td>
+          <td>$${cand.metrics.total_monthly_cost_usd.toFixed(0)}/mo</td>
+          <td><span style="display:inline-flex; padding:0.2rem 0.55rem; border-radius:var(--radius-full); font-size:0.75rem; font-weight:600; background:var(--bg-lavender); color:var(--color-primary); border:1px solid var(--border-color);">Score: ${Number(scoreVal).toFixed(3)}</span></td>
+        </tr>
+      `;
+    }).join('');
   }
 }
 
@@ -640,21 +751,21 @@ function renderChaosResults(res) {
         <div class="stat-value ${res.latency_delta_ms > 0 ? 'delta-bad' : 'delta-good'}">
           ${res.latency_delta_ms > 0 ? '+' : ''}${res.latency_delta_ms.toFixed(1)} ms
         </div>
-        <div style="font-size:0.8rem; color:var(--text-muted)">Baseline: ${base.p95_latency_ms.toFixed(1)}ms &rarr; Degraded: ${fail.p95_latency_ms.toFixed(1)}ms</div>
+        <div style="font-size:0.8rem; color:var(--text-secondary)">Baseline: ${base.p95_latency_ms.toFixed(1)}ms &rarr; Degraded: ${fail.p95_latency_ms.toFixed(1)}ms</div>
       </div>
       <div class="stat-card">
         <div class="stat-header">Throughput Drop</div>
         <div class="stat-value ${res.throughput_delta_rps < 0 ? 'delta-bad' : 'delta-good'}">
           ${res.throughput_delta_rps.toFixed(0)} RPS
         </div>
-        <div style="font-size:0.8rem; color:var(--text-muted)">Baseline: ${base.throughput_rps.toFixed(0)} RPS &rarr; Degraded: ${fail.throughput_rps.toFixed(0)} RPS</div>
+        <div style="font-size:0.8rem; color:var(--text-secondary)">Baseline: ${base.throughput_rps.toFixed(0)} RPS &rarr; Degraded: ${fail.throughput_rps.toFixed(0)} RPS</div>
       </div>
       <div class="stat-card">
         <div class="stat-header">Resilience Rating</div>
-        <div class="stat-value" style="color:var(--accent-cyan)">
+        <div class="stat-value" style="color:var(--color-primary)">
           ${fail.error_rate < 0.05 ? 'RESILIENT' : 'VULNERABLE'}
         </div>
-        <div style="font-size:0.8rem; color:var(--text-muted)">Error Rate: ${(fail.error_rate * 100).toFixed(1)}%</div>
+        <div style="font-size:0.8rem; color:var(--text-secondary)">Error Rate: ${(fail.error_rate * 100).toFixed(1)}%</div>
       </div>
     </div>
     <div class="alert alert-info">

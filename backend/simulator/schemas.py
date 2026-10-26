@@ -167,10 +167,17 @@ class ArchitectureGraph(BaseModel):
 
     @model_validator(mode="after")
     def validate_graph_integrity(self) -> ArchitectureGraph:
-        component_ids = {c.id for c in self.components}
-        if len(component_ids) != len(self.components):
-            duplicates = [c.id for c in self.components if self.components.count(c) > 1]
-            raise ValueError(f"Duplicate component IDs detected in architecture: {set(duplicates)}")
+        seen_ids = set()
+        duplicate_ids = set()
+        for c in self.components:
+            if c.id in seen_ids:
+                duplicate_ids.add(c.id)
+            seen_ids.add(c.id)
+
+        if duplicate_ids:
+            raise ValueError(f"Duplicate component IDs detected in architecture: {sorted(duplicate_ids)}")
+
+        component_ids = seen_ids
 
         for conn in self.connections:
             if conn.source not in component_ids:

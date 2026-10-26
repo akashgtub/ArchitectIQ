@@ -22,7 +22,7 @@ ArchitectIQ brings together two key module suites behind a unified FastAPI appli
 * **Schema Adapter & Direct Simulator Facade**: Seamless adapter (`backend/shared/adapter.py`) bridging Member 1 canonical schemas with Member 2 physics simulation models.
 
 ### 3. Integrated Web Application
-* **Modern Web Interface**: Responsive single-page application built with modern dark aesthetics, glassmorphism panels, interactive topology badges, live metric gauges, and Pareto trade-off comparisons.
+* **Modern Web Interface**: Responsive single-page application built with a sleek purple-and-white theme, clean surface cards, interactive topology badges, live metric gauges, and Pareto trade-off comparisons.
 * **Direct FastAPI Integration**: Automatically served directly from `http://localhost:8000/` or standalone via Vite dev server (`http://localhost:5173/`).
 
 ---
