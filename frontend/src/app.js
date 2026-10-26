@@ -1,11 +1,12 @@
 /**
  * ArchitectIQ - Autonomous AI Agent Frontend Application Controller
- * Wires the interactive UI to the FastAPI backend endpoints.
+ * Wires the interactive UI to the FastAPI backend endpoints with strict
+ * lifecycle management, workflow dependency enforcement, and real data integrity.
  */
 
 import { api } from './api.js';
 
-// Predefined Real-World Architecture Presets
+// Predefined Real-World Architecture Presets (Explicitly labelled demonstration samples)
 const PRESET_ARCHITECTURES = {
   ecommerce: {
     name: "E-Commerce Microservices Platform",
@@ -146,14 +147,21 @@ function normalizeArchitectureForSimulation(arch) {
   };
 }
 
-// Global Application State
+// ============================================================================
+// Global Application State (Lifecycle: EMPTY -> FILE_SELECTED -> ANALYZING -> READY / ERROR)
+// ============================================================================
+
 const state = {
-  currentArchitecture: PRESET_ARCHITECTURES.ecommerce,
-  currentInvestigation: null,
-  baselineResult: null,
-  optimizationResult: null,
-  chaosResult: null,
-  selectedFile: null,
+  lifecycleState: 'EMPTY',        // 'EMPTY' | 'FILE_SELECTED' | 'ANALYZING' | 'READY' | 'ERROR'
+  currentArchitecture: null,      // Source of truth. Null until verified parse or explicit preset load
+  architectureSource: null,       // 'upload' | 'sample_preset' | null
+  architectureName: null,         // Display name
+  analysisProvenance: null,       // { provider, model_id, is_mock, fallback_used }
+  baselineResult: null,           // Baseline simulation result (null until successful execution)
+  currentInvestigation: null,     // Root-cause investigation result (null until successful run)
+  optimizationResult: null,       // Optimization search result (null until successful run)
+  chaosResult: null,              // Chaos experiment result (null until successful run)
+  selectedFile: null,             // Selected image file object
 };
 
 // ============================================================================
@@ -166,7 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initUploadDropzone();
   initActionButtons();
   checkBackendHealth();
-  renderTopology();
+  updateWorkflowAvailability();
 });
 
 function initTabs() {
@@ -198,7 +206,164 @@ async function checkBackendHealth() {
       statusDot.style.background = '#DC2626';
       statusText.textContent = 'Backend Offline';
     }
-    showAlert('global-alert', `Backend service connection warning: ${err.message}. Ensure backend is running on port 8000.`, 'warning');
+    showAlert('global-alert', `Backend service connection warning: ${err.message}. Ensure FastAPI is running on port 8000.`, 'warning');
+  }
+}
+
+// ============================================================================
+// Workflow Invalidation & State Gatekeeper
+// ============================================================================
+
+/**
+ * Invalidates all dependent results when architecture changes or is cleared.
+ * Enforces that no stale, fabricated, or preset metrics linger after state changes.
+ */
+function invalidateArchitectureResults(notice = '') {
+  state.baselineResult = null;
+  state.currentInvestigation = null;
+  state.optimizationResult = null;
+  state.chaosResult = null;
+
+  renderSimulationResults(null);
+  renderInvestigationResults(null);
+  renderOptimizationResults(null);
+  renderChaosResults(null);
+
+  hideAlert('simulation-alert');
+  hideAlert('investigation-alert');
+  hideAlert('optimization-alert');
+  hideAlert('chaos-alert');
+
+  if (notice) {
+    showAlert('global-alert', notice, 'info');
+  }
+}
+
+/**
+ * Central gatekeeper that enables/disables UI actions and displays clear
+ * dependency guidance across all 6 dashboard stages based on actual state.
+ */
+function updateWorkflowAvailability() {
+  const hasArchitecture = Boolean(state.currentArchitecture && state.currentArchitecture.components?.length > 0);
+  const hasBaseline = Boolean(state.baselineResult && state.baselineResult.metrics);
+
+  // 1. Header Architecture Status Badge
+  const archBadge = document.getElementById('header-arch-badge');
+  if (archBadge) {
+    if (state.lifecycleState === 'EMPTY') {
+      archBadge.textContent = 'No Architecture Loaded';
+      archBadge.style.background = 'var(--bg-lavender)';
+      archBadge.style.color = 'var(--text-secondary)';
+    } else if (state.lifecycleState === 'FILE_SELECTED') {
+      archBadge.textContent = 'Diagram Selected (Unanalyzed)';
+      archBadge.style.background = '#FEF3C7';
+      archBadge.style.color = '#B45309';
+    } else if (state.lifecycleState === 'ANALYZING') {
+      archBadge.textContent = 'Analyzing Architecture...';
+      archBadge.style.background = '#EDE9FE';
+      archBadge.style.color = 'var(--color-primary)';
+    } else if (state.lifecycleState === 'READY') {
+      const label = state.architectureSource === 'sample_preset' ? `Sample Preset: ${state.architectureName}` : `Uploaded: ${state.architectureName}`;
+      archBadge.textContent = label;
+      archBadge.style.background = '#DCFCE7';
+      archBadge.style.color = '#15803D';
+    } else if (state.lifecycleState === 'ERROR') {
+      archBadge.textContent = 'Architecture Error';
+      archBadge.style.background = '#FEE2E2';
+      archBadge.style.color = 'var(--color-error)';
+    }
+  }
+
+  // 2. Stage 2: Topology Visualizer
+  renderTopology();
+
+  // 3. Stage 3: Baseline Simulation Button & Guidance
+  const btnSimulate = document.getElementById('btn-simulate');
+  const simDepAlert = document.getElementById('simulation-dependency-alert');
+  if (btnSimulate) {
+    btnSimulate.disabled = !hasArchitecture;
+    if (!hasArchitecture) {
+      btnSimulate.title = 'Requires an analyzed architecture from Stage 1';
+      if (simDepAlert) {
+        simDepAlert.className = 'alert alert-info';
+        simDepAlert.innerHTML = '<strong>Stage Dependency:</strong> Baseline simulation requires an analyzed architecture. Ingest an architecture diagram or select a sample preset in Stage 1 first.';
+        simDepAlert.style.display = 'block';
+      }
+    } else {
+      btnSimulate.title = 'Execute discrete-event baseline performance simulation';
+      if (simDepAlert) simDepAlert.style.display = 'none';
+    }
+  }
+
+  // 4. Stage 4: Root-Cause Investigation Button & Guidance
+  const btnInvestigate = document.getElementById('btn-investigate');
+  const invDepAlert = document.getElementById('investigation-dependency-alert');
+  if (btnInvestigate) {
+    btnInvestigate.disabled = !hasArchitecture || !hasBaseline;
+    if (!hasArchitecture) {
+      btnInvestigate.title = 'Requires an analyzed architecture from Stage 1';
+      if (invDepAlert) {
+        invDepAlert.className = 'alert alert-info';
+        invDepAlert.innerHTML = '<strong>Stage Dependency:</strong> Root-cause investigation requires an active architecture from Stage 1 and baseline simulation evidence from Stage 3.';
+        invDepAlert.style.display = 'block';
+      }
+    } else if (!hasBaseline) {
+      btnInvestigate.title = 'Requires baseline simulation evidence from Stage 3';
+      if (invDepAlert) {
+        invDepAlert.className = 'alert alert-warning';
+        invDepAlert.innerHTML = '<strong>Evidence Required:</strong> Root-cause investigation requires measured baseline simulation evidence. Run Stage 3 (Baseline Simulation) before diagnosing bottlenecks.';
+        invDepAlert.style.display = 'block';
+      }
+    } else {
+      btnInvestigate.title = 'Start automated bottleneck diagnosis and diagnostic experiments';
+      if (invDepAlert) invDepAlert.style.display = 'none';
+    }
+  }
+
+  // 5. Stage 5: Architecture Optimizer Button & Guidance
+  const btnOptimize = document.getElementById('btn-optimize');
+  const optDepAlert = document.getElementById('optimization-dependency-alert');
+  if (btnOptimize) {
+    btnOptimize.disabled = !hasArchitecture;
+    if (!hasArchitecture) {
+      btnOptimize.title = 'Requires an analyzed architecture from Stage 1';
+      if (optDepAlert) {
+        optDepAlert.className = 'alert alert-info';
+        optDepAlert.innerHTML = '<strong>Stage Dependency:</strong> Optimization search requires an analyzed architecture to mutate and evaluate. Complete Stage 1 first.';
+        optDepAlert.style.display = 'block';
+      }
+    } else {
+      btnOptimize.title = 'Explore alternative architectures and rank by Pareto trade-off';
+      if (optDepAlert) optDepAlert.style.display = 'none';
+    }
+  }
+
+  // 6. Stage 6: Chaos Resilience Lab Button & Target Component Selector
+  const btnChaos = document.getElementById('btn-chaos');
+  const selectChaosTarget = document.getElementById('select-chaos-target');
+  const chaosDepAlert = document.getElementById('chaos-dependency-alert');
+  if (btnChaos) {
+    btnChaos.disabled = !hasArchitecture || !hasBaseline;
+    if (selectChaosTarget) selectChaosTarget.disabled = !hasArchitecture;
+
+    if (!hasArchitecture) {
+      btnChaos.title = 'Requires an analyzed architecture from Stage 1';
+      if (chaosDepAlert) {
+        chaosDepAlert.className = 'alert alert-info';
+        chaosDepAlert.innerHTML = '<strong>Stage Dependency:</strong> Chaos resilience testing requires an active architecture and baseline simulation metrics to measure degradation deltas. Complete Stages 1 & 3 first.';
+        chaosDepAlert.style.display = 'block';
+      }
+    } else if (!hasBaseline) {
+      btnChaos.title = 'Requires baseline simulation metrics from Stage 3 for delta comparison';
+      if (chaosDepAlert) {
+        chaosDepAlert.className = 'alert alert-warning';
+        chaosDepAlert.innerHTML = '<strong>Baseline Required:</strong> Chaos testing compares failure metrics against a baseline. Please execute Stage 3 (Baseline Simulation) before injecting failures.';
+        chaosDepAlert.style.display = 'block';
+      }
+    } else {
+      btnChaos.title = 'Inject failure scenario and measure system recovery';
+      if (chaosDepAlert) chaosDepAlert.style.display = 'none';
+    }
   }
 }
 
@@ -212,19 +377,38 @@ function initPresetSelector() {
 
   select.addEventListener('change', (e) => {
     const presetKey = e.target.value;
+    if (!presetKey) return;
+
     if (PRESET_ARCHITECTURES[presetKey]) {
-      state.currentArchitecture = JSON.parse(JSON.stringify(PRESET_ARCHITECTURES[presetKey]));
+      // Invalidate any previously loaded results
+      invalidateArchitectureResults('Sample preset loaded. Previous simulation results cleared.');
+
+      // Clear any pending file selection
+      state.selectedFile = null;
+      const dropzoneText = document.getElementById('dropzone-filename');
+      if (dropzoneText) dropzoneText.textContent = 'Drop architecture diagram here or click to browse';
+
+      // Load preset explicitly as demonstration architecture
+      state.currentArchitecture = normalizeArchitectureForSimulation(JSON.parse(JSON.stringify(PRESET_ARCHITECTURES[presetKey])));
+      state.architectureSource = 'sample_preset';
+      state.architectureName = PRESET_ARCHITECTURES[presetKey].name;
+      state.analysisProvenance = {
+        provider: 'sample_preset',
+        model_id: 'preset_data',
+        is_mock: true,
+        fallback_used: false,
+      };
+      state.lifecycleState = 'READY';
+
       populateFormFromArchitecture(state.currentArchitecture);
-      renderTopology();
-      showAlert('upload-alert', `Loaded preset: ${state.currentArchitecture.name}`, 'info');
+      updateWorkflowAvailability();
+      showAlert('upload-alert', `Loaded sample preset: ${state.architectureName} [Demonstration Input]. Run Baseline Simulation in Stage 3 to model performance.`, 'info');
     }
   });
-
-  // Populate initial values
-  populateFormFromArchitecture(state.currentArchitecture);
 }
 
 function populateFormFromArchitecture(arch) {
+  if (!arch) return;
   const rpsInput = document.getElementById('input-rps');
   const readRatioInput = document.getElementById('input-read-ratio');
   const latencyConstraint = document.getElementById('input-max-latency');
@@ -269,31 +453,46 @@ function initUploadDropzone() {
 function handleFileSelected(file) {
   hideAlert('upload-alert');
   const dropzoneText = document.getElementById('dropzone-filename');
+  const presetSelector = document.getElementById('preset-selector');
+
+  // Immediately invalidate previous architecture and all dependent results
+  state.currentArchitecture = null;
+  state.architectureSource = 'upload';
+  state.architectureName = null;
+  state.analysisProvenance = null;
+  if (presetSelector) presetSelector.value = '';
+  invalidateArchitectureResults('New diagram selected. Previous architecture and simulation results invalidated.');
 
   const validFormats = ['image/png', 'image/jpeg', 'image/webp'];
   const ext = file.name ? file.name.split('.').pop().toLowerCase() : '';
   const isFormatValid = validFormats.includes(file.type) || ['png', 'jpg', 'jpeg', 'webp'].includes(ext);
 
   if (!isFormatValid) {
-    showAlert('upload-alert', `Invalid image format '${file.type || ext}'. Please upload a valid PNG, JPEG, or WEBP diagram.`, 'danger');
+    showAlert('upload-alert', `Upload rejected: Unsupported format '${file.type || ext}'. Please upload a PNG, JPEG, or WEBP diagram.`, 'danger');
     if (dropzoneText) dropzoneText.textContent = 'Upload rejected: Unsupported format (PNG, JPEG, WEBP allowed)';
     state.selectedFile = null;
+    state.lifecycleState = 'ERROR';
+    updateWorkflowAvailability();
     return;
   }
 
   const maxBytes = 10 * 1024 * 1024; // 10MB
   if (file.size > maxBytes) {
-    showAlert('upload-alert', `Image size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds maximum allowed 10 MB limit.`, 'danger');
+    showAlert('upload-alert', `Upload rejected: Image size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds maximum allowed 10 MB limit.`, 'danger');
     if (dropzoneText) dropzoneText.textContent = 'Upload rejected: File size exceeds 10MB';
     state.selectedFile = null;
+    state.lifecycleState = 'ERROR';
+    updateWorkflowAvailability();
     return;
   }
 
   state.selectedFile = file;
+  state.lifecycleState = 'FILE_SELECTED';
   if (dropzoneText) {
     dropzoneText.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
   }
-  showAlert('upload-alert', `Image "${file.name}" ready for analysis. Click "Analyze & Parse Architecture" below.`, 'info');
+  showAlert('upload-alert', `Diagram "${file.name}" selected. Click "Analyze & Parse Architecture" below to begin AI analysis.`, 'info');
+  updateWorkflowAvailability();
 }
 
 // ============================================================================
@@ -301,45 +500,39 @@ function handleFileSelected(file) {
 // ============================================================================
 
 function initActionButtons() {
-  // Analyze diagram button
   const btnAnalyze = document.getElementById('btn-analyze');
-  if (btnAnalyze) {
-    btnAnalyze.addEventListener('click', executeDiagramAnalysis);
-  }
+  if (btnAnalyze) btnAnalyze.addEventListener('click', executeDiagramAnalysis);
 
-  // Run simulation button
   const btnSimulate = document.getElementById('btn-simulate');
-  if (btnSimulate) {
-    btnSimulate.addEventListener('click', executeBaselineSimulation);
-  }
+  if (btnSimulate) btnSimulate.addEventListener('click', executeBaselineSimulation);
 
-  // Start investigation button
   const btnInvestigate = document.getElementById('btn-investigate');
-  if (btnInvestigate) {
-    btnInvestigate.addEventListener('click', executeRootCauseInvestigation);
-  }
+  if (btnInvestigate) btnInvestigate.addEventListener('click', executeRootCauseInvestigation);
 
-  // Run optimization button
   const btnOptimize = document.getElementById('btn-optimize');
-  if (btnOptimize) {
-    btnOptimize.addEventListener('click', executeOptimization);
-  }
+  if (btnOptimize) btnOptimize.addEventListener('click', executeOptimization);
 
-  // Run chaos resilience button
   const btnChaos = document.getElementById('btn-chaos');
-  if (btnChaos) {
-    btnChaos.addEventListener('click', executeChaosSimulation);
-  }
+  if (btnChaos) btnChaos.addEventListener('click', executeChaosSimulation);
 }
 
 // 1. Diagram Analysis
 async function executeDiagramAnalysis() {
   const btn = document.getElementById('btn-analyze');
+  const requirementsInput = document.getElementById('input-requirements');
+  const requirements = requirementsInput?.value?.trim() || '';
+
+  if (!state.selectedFile && !requirements) {
+    showAlert('upload-alert', 'Please upload an architecture diagram image or enter system requirements, or load a sample preset.', 'warning');
+    return;
+  }
+
   setLoading(btn, true, 'Analyzing with AI...');
   hideAlert('upload-alert');
+  state.lifecycleState = 'ANALYZING';
+  updateWorkflowAvailability();
 
   try {
-    const requirements = document.getElementById('input-requirements')?.value || '';
     const rps = parseFloat(document.getElementById('input-rps')?.value || '1000');
     const readRatio = parseFloat(document.getElementById('input-read-ratio')?.value || '0.8');
     const writeRatio = Math.max(0, 1.0 - readRatio);
@@ -357,19 +550,45 @@ async function executeDiagramAnalysis() {
       constraints
     });
 
-    if (res.architecture) {
+    if (res && res.architecture && Array.isArray(res.architecture.components) && res.architecture.components.length > 0) {
       state.currentArchitecture = normalizeArchitectureForSimulation(res.architecture);
-      renderTopology();
-      const modelNotice = res.is_mock
-        ? ' (Deterministic Fallback: GEMINI_API_KEY / GEMMA_API_KEY not configured)'
-        : ` (Provider: ${res.provider || 'Gemma/Gemini'}, Model: ${res.model_id || 'gemma-2-27b-it'})`;
-      showAlert('upload-alert', `Architecture successfully parsed${modelNotice}! Extracted ${state.currentArchitecture.components.length} components and ${state.currentArchitecture.connections.length} connections with validated topology.`, 'success');
-      // Switch to topology tab
+      state.architectureSource = 'upload';
+      state.architectureName = state.selectedFile ? state.selectedFile.name : (res.architecture.architecture_id || 'Uploaded Architecture');
+      state.analysisProvenance = {
+        provider: res.provider,
+        model_id: res.model_id,
+        is_mock: res.is_mock,
+        fallback_used: res.fallback_used,
+      };
+      state.lifecycleState = 'READY';
+
+      // Clear any older simulation results since architecture changed
+      invalidateArchitectureResults();
+
+      updateWorkflowAvailability();
+
+      const provenanceText = res.fallback_used
+        ? `[Mode: Deterministic Fallback - Provenance: ${res.provider || 'deterministic_rules_v1'}]`
+        : `[Provider: ${res.provider || 'Gemma/Gemini'}, Model: ${res.model_id || 'active_model'}]`;
+
+      showAlert(
+        'upload-alert',
+        `Architecture successfully analyzed and validated (${state.currentArchitecture.components.length} components, ${state.currentArchitecture.connections.length} connections). Provenance: ${provenanceText}.`,
+        'success'
+      );
+
+      // Transition to Stage 2 Topology View
       switchTab('tab-topology');
     } else {
-      showAlert('upload-alert', `Analysis complete: ${res.status}. Review observations.`, 'info');
+      state.currentArchitecture = null;
+      state.lifecycleState = 'ERROR';
+      updateWorkflowAvailability();
+      showAlert('upload-alert', `Analysis completed with validation error: ${res.status || 'invalid'}. No components detected.`, 'danger');
     }
   } catch (err) {
+    state.currentArchitecture = null;
+    state.lifecycleState = 'ERROR';
+    updateWorkflowAvailability();
     showAlert('upload-alert', `Analysis failed: ${err.message}`, 'danger');
   } finally {
     setLoading(btn, false, 'Analyze & Parse Architecture');
@@ -378,6 +597,11 @@ async function executeDiagramAnalysis() {
 
 // 2. Baseline Simulation
 async function executeBaselineSimulation() {
+  if (!state.currentArchitecture) {
+    showAlert('simulation-alert', 'Stage 3 requires a validated architecture. Complete Stage 1 (Ingest & Analyze) first.', 'warning');
+    return;
+  }
+
   const btn = document.getElementById('btn-simulate');
   setLoading(btn, true, 'Running Discrete Simulation...');
   hideAlert('simulation-alert');
@@ -409,9 +633,14 @@ async function executeBaselineSimulation() {
 
     state.baselineResult = res;
     renderSimulationResults(res);
-    const modeBadge = res.simulation_metadata?.execution_mode === 'real' ? 'Real Discrete Simulation Engine' : 'Mock Simulator';
+    updateWorkflowAvailability(); // Enables Root-Cause and Chaos
+
+    const modeBadge = res.simulation_metadata?.execution_mode === 'real' ? 'Real Discrete Simulation Engine' : 'Simulator Engine';
     showAlert('simulation-alert', `Baseline simulation completed successfully [${modeBadge}]. Metrics represent modeled discrete-event estimates, not production measurements.`, 'success');
   } catch (err) {
+    state.baselineResult = null;
+    renderSimulationResults(null);
+    updateWorkflowAvailability();
     showAlert('simulation-alert', `Simulation error: ${err.message}`, 'danger');
   } finally {
     setLoading(btn, false, 'Run Baseline Simulation');
@@ -420,13 +649,17 @@ async function executeBaselineSimulation() {
 
 // 3. Root-Cause Investigation
 async function executeRootCauseInvestigation() {
+  if (!state.currentArchitecture || !state.baselineResult) {
+    showAlert('investigation-alert', 'Root-cause investigation requires an active architecture and baseline simulation evidence. Run Stage 3 first.', 'warning');
+    return;
+  }
+
   const btn = document.getElementById('btn-investigate');
   setLoading(btn, true, 'Diagnosing Bottlenecks...');
   hideAlert('investigation-alert');
 
   try {
     const arch = normalizeArchitectureForSimulation(state.currentArchitecture);
-    // Ensure workload format matches Member 1 canonical schema
     const m1Arch = {
       schema_version: "1.0",
       architecture_id: arch.architecture_id || "arch-inv-01",
@@ -459,8 +692,10 @@ async function executeRootCauseInvestigation() {
     state.currentInvestigation = res;
     renderInvestigationResults(res);
     const engineBadge = res.execution_mode === 'mock' ? 'Deterministic Mock' : 'Real Discrete Simulator Engine';
-    showAlert('investigation-alert', `Investigation complete [Engine: ${engineBadge}]! Formulated hypotheses and executed targeted diagnostic experiments.`, 'success');
+    showAlert('investigation-alert', `Investigation complete [Engine: ${engineBadge}]! Tested ${res.root_cause_analysis?.experiments?.length || 0} diagnostic experiments.`, 'success');
   } catch (err) {
+    state.currentInvestigation = null;
+    renderInvestigationResults(null);
     showAlert('investigation-alert', `Investigation failed: ${err.message}`, 'danger');
   } finally {
     setLoading(btn, false, 'Start Root-Cause Investigation');
@@ -469,6 +704,11 @@ async function executeRootCauseInvestigation() {
 
 // 4. Architecture Optimization
 async function executeOptimization() {
+  if (!state.currentArchitecture) {
+    showAlert('optimization-alert', 'Stage 5 requires an analyzed architecture. Ingest an architecture first.', 'warning');
+    return;
+  }
+
   const btn = document.getElementById('btn-optimize');
   setLoading(btn, true, 'Exploring Candidates...');
   hideAlert('optimization-alert');
@@ -495,6 +735,8 @@ async function executeOptimization() {
     renderOptimizationResults(res);
     showAlert('optimization-alert', `Evaluated ${res.total_candidates_evaluated} candidates. Best candidate recommended under ${objective} objective.`, 'success');
   } catch (err) {
+    state.optimizationResult = null;
+    renderOptimizationResults(null);
     showAlert('optimization-alert', `Optimization failed: ${err.message}`, 'danger');
   } finally {
     setLoading(btn, false, 'Run Optimization Search');
@@ -503,6 +745,11 @@ async function executeOptimization() {
 
 // 5. Chaos Resilience Simulation
 async function executeChaosSimulation() {
+  if (!state.currentArchitecture || !state.baselineResult) {
+    showAlert('chaos-alert', 'Chaos testing requires an active architecture and baseline simulation metrics to compare degradation. Run Stage 3 first.', 'warning');
+    return;
+  }
+
   const btn = document.getElementById('btn-chaos');
   setLoading(btn, true, 'Injecting Fault...');
   hideAlert('chaos-alert');
@@ -538,6 +785,8 @@ async function executeChaosSimulation() {
     renderChaosResults(res);
     showAlert('chaos-alert', `Resilience experiment complete. Compared degraded metrics against baseline.`, 'success');
   } catch (err) {
+    state.chaosResult = null;
+    renderChaosResults(null);
     showAlert('chaos-alert', `Chaos experiment failed: ${err.message}`, 'danger');
   } finally {
     setLoading(btn, false, 'Inject Failure & Simulate Resilience');
@@ -545,19 +794,61 @@ async function executeChaosSimulation() {
 }
 
 // ============================================================================
-// Renderers
+// Renderers (Real Data Sources of Truth)
 // ============================================================================
 
 function renderTopology() {
   const container = document.getElementById('topology-container');
+  const connSummary = document.getElementById('connection-summary');
   const chaosSelect = document.getElementById('select-chaos-target');
+  const provenanceBadge = document.getElementById('topology-provenance-badge');
+
   if (!container) return;
+
+  if (!state.currentArchitecture || !state.currentArchitecture.components || state.currentArchitecture.components.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state-card" style="grid-column: 1 / -1;">
+        <h3>No Architecture Topology Loaded</h3>
+        <p>Upload a system architecture diagram image or select a sample preset in Stage 1 to extract and visualize active components.</p>
+        <button class="btn btn-secondary" onclick="document.querySelector('.nav-tab[data-tab=\\'tab-upload\\']')?.click()">Go to Stage 1: Ingest & Analyze</button>
+      </div>
+    `;
+    if (connSummary) {
+      connSummary.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.88rem;">No active communication channels detected.</p>';
+    }
+    if (chaosSelect) {
+      chaosSelect.innerHTML = '<option value="">No components available</option>';
+    }
+    if (provenanceBadge) {
+      provenanceBadge.style.display = 'none';
+    }
+    return;
+  }
 
   const arch = normalizeArchitectureForSimulation(state.currentArchitecture);
   container.innerHTML = '';
 
   if (chaosSelect) {
     chaosSelect.innerHTML = '';
+  }
+
+  // Show provenance badge
+  if (provenanceBadge) {
+    const prov = state.analysisProvenance;
+    if (state.architectureSource === 'sample_preset') {
+      provenanceBadge.textContent = 'Source: Sample Preset Input';
+      provenanceBadge.style.background = 'var(--bg-lavender)';
+      provenanceBadge.style.color = 'var(--color-deep)';
+    } else if (prov?.fallback_used) {
+      provenanceBadge.textContent = `Source: Uploaded (Deterministic Fallback: ${prov.provider || 'rules'})`;
+      provenanceBadge.style.background = '#FEF3C7';
+      provenanceBadge.style.color = '#B45309';
+    } else {
+      provenanceBadge.textContent = `Source: Uploaded (AI: ${prov?.provider || 'Gemma/Gemini'})`;
+      provenanceBadge.style.background = '#DCFCE7';
+      provenanceBadge.style.color = '#15803D';
+    }
+    provenanceBadge.style.display = 'inline-flex';
   }
 
   arch.components.forEach(comp => {
@@ -586,13 +877,16 @@ function renderTopology() {
     }
   });
 
-  const connSummary = document.getElementById('connection-summary');
   if (connSummary) {
-    connSummary.innerHTML = arch.connections.map(c => `
-      <span style="display:inline-flex; align-items:center; gap:0.35rem; padding: 0.3rem 0.75rem; background: var(--bg-lavender); border: 1px solid var(--border-color); border-radius: var(--radius-xs); font-size: 0.85rem; margin: 0.25rem; color: var(--color-deep); font-weight: 500;">
-        <code>${c.source}</code> &rarr; <code>${c.target}</code> <small style="color:var(--text-secondary)">(${c.protocol || 'http'})</small>
-      </span>
-    `).join('');
+    if (arch.connections && arch.connections.length > 0) {
+      connSummary.innerHTML = arch.connections.map(c => `
+        <span style="display:inline-flex; align-items:center; gap:0.35rem; padding: 0.3rem 0.75rem; background: var(--bg-lavender); border: 1px solid var(--border-color); border-radius: var(--radius-xs); font-size: 0.85rem; margin: 0.25rem; color: var(--color-deep); font-weight: 500;">
+          <code>${c.source}</code> &rarr; <code>${c.target}</code> <small style="color:var(--text-secondary)">(${c.protocol || 'http'})</small>
+        </span>
+      `).join('');
+    } else {
+      connSummary.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.88rem;">No directed connections found for this architecture.</p>';
+    }
   }
 }
 
@@ -604,13 +898,26 @@ function renderSimulationResults(res) {
   const breakdownContainer = document.getElementById('sim-component-breakdown');
   const bottlenecksContainer = document.getElementById('sim-bottlenecks');
 
+  if (!res || !res.metrics) {
+    if (p95El) p95El.textContent = '-- ms';
+    if (p50El) p50El.textContent = '-- ms';
+    if (rpsEl) rpsEl.textContent = '-- RPS';
+    if (costEl) costEl.textContent = '-- /hr';
+    if (breakdownContainer) {
+      breakdownContainer.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Run baseline simulation in Stage 3 to compute component-level utilization.</p>';
+    }
+    if (bottlenecksContainer) {
+      bottlenecksContainer.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">No simulation executed yet.</p>';
+    }
+    return;
+  }
+
   const m = res.metrics;
   if (p95El) p95El.textContent = `${m.p95_latency_ms.toFixed(1)} ms`;
   if (p50El) p50El.textContent = `${m.p50_latency_ms.toFixed(1)} ms`;
   if (rpsEl) rpsEl.textContent = `${m.throughput_rps.toFixed(0)} RPS`;
   if (costEl) costEl.textContent = `$${(m.total_monthly_cost_usd / 730).toFixed(2)}/hr`;
 
-  // Component breakdown
   if (breakdownContainer && m.component_breakdown) {
     breakdownContainer.innerHTML = Object.entries(m.component_breakdown).map(([id, cm]) => {
       const utilPct = Math.min(100, (cm.utilization * 100)).toFixed(1);
@@ -629,7 +936,6 @@ function renderSimulationResults(res) {
     }).join('');
   }
 
-  // Bottlenecks
   if (bottlenecksContainer) {
     if (res.bottlenecks && res.bottlenecks.length > 0) {
       bottlenecksContainer.innerHTML = res.bottlenecks.map(b => `
@@ -650,8 +956,17 @@ function renderInvestigationResults(res) {
   const hypothesesContainer = document.getElementById('investigation-hypotheses');
   const experimentsContainer = document.getElementById('investigation-experiments');
 
+  if (!res || !res.root_cause_analysis) {
+    if (hypothesesContainer) {
+      hypothesesContainer.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Formulated hypotheses will appear here once an investigation is started.</p>';
+    }
+    if (experimentsContainer) {
+      experimentsContainer.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">Diagnostic experiments will appear here with measured metric differences.</p>';
+    }
+    return;
+  }
+
   const rca = res.root_cause_analysis;
-  if (!rca) return;
 
   if (hypothesesContainer && rca.hypotheses) {
     hypothesesContainer.innerHTML = rca.hypotheses.map(hyp => {
@@ -703,6 +1018,18 @@ function renderInvestigationResults(res) {
 function renderOptimizationResults(res) {
   const recContainer = document.getElementById('optimization-recommended');
   const tableBody = document.getElementById('optimization-table-body');
+
+  if (!res || !res.ranked_candidates) {
+    if (recContainer) recContainer.innerHTML = '';
+    if (tableBody) {
+      tableBody.innerHTML = `
+        <tr>
+          <td colspan="6" style="text-align: center; color: var(--text-secondary);">No optimization candidates evaluated yet. Run optimization search to explore alternatives.</td>
+        </tr>
+      `;
+    }
+    return;
+  }
 
   const rec = res.recommended_candidate;
   if (recContainer && rec) {
@@ -758,6 +1085,11 @@ function renderOptimizationResults(res) {
 function renderChaosResults(res) {
   const container = document.getElementById('chaos-results-container');
   if (!container) return;
+
+  if (!res || !res.baseline_metrics || !res.failure_metrics) {
+    container.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">No failure simulation executed yet. Select a fault scenario above and click Inject Failure.</p>';
+    return;
+  }
 
   const base = res.baseline_metrics;
   const fail = res.failure_metrics;

@@ -11,7 +11,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -95,18 +95,18 @@ class SimulationRunRequest(BaseModel):
     """Payload for running baseline architecture simulation."""
     model_config = ConfigDict(extra="ignore")
 
-    architecture: ArchitectureGraph = Field(..., description="Architecture topology graph")
-    workload: WorkloadConfig = Field(..., description="Simulation workload profile")
-    constraints: Optional[M2Constraints] = Field(None, description="Optional performance and budget constraints")
+    architecture: Union[ArchitectureGraph, Dict[str, Any]] = Field(..., description="Architecture topology graph")
+    workload: Union[WorkloadConfig, Dict[str, Any]] = Field(..., description="Simulation workload profile")
+    constraints: Optional[Union[M2Constraints, Dict[str, Any]]] = Field(None, description="Optional performance and budget constraints")
 
 
 class OptimizationRunRequest(BaseModel):
     """Payload for architecture optimization search."""
     model_config = ConfigDict(extra="ignore")
 
-    architecture: ArchitectureGraph = Field(..., description="Baseline architecture topology graph")
-    workload: WorkloadConfig = Field(..., description="Simulation workload profile")
-    constraints: Optional[M2Constraints] = Field(None, description="Boundary performance and budget constraints")
+    architecture: Union[ArchitectureGraph, Dict[str, Any]] = Field(..., description="Baseline architecture topology graph")
+    workload: Union[WorkloadConfig, Dict[str, Any]] = Field(..., description="Simulation workload profile")
+    constraints: Optional[Union[M2Constraints, Dict[str, Any]]] = Field(None, description="Boundary performance and budget constraints")
     objective: OptimizationObjective = Field(
         default=OptimizationObjective.BALANCED,
         description="Target optimization objective (minimize_latency, minimize_cost, maximize_throughput, balanced)",
@@ -118,10 +118,10 @@ class ChaosRunRequest(BaseModel):
     """Payload for chaos engineering fault injection."""
     model_config = ConfigDict(extra="ignore")
 
-    architecture: ArchitectureGraph = Field(..., description="Architecture topology graph")
-    workload: WorkloadConfig = Field(..., description="Simulation workload profile")
-    scenario: FailureScenario = Field(..., description="Chaos engineering failure scenario")
-    constraints: Optional[M2Constraints] = Field(None, description="Optional performance and budget constraints")
+    architecture: Union[ArchitectureGraph, Dict[str, Any]] = Field(..., description="Architecture topology graph")
+    workload: Union[WorkloadConfig, Dict[str, Any]] = Field(..., description="Simulation workload profile")
+    scenario: Union[FailureScenario, Dict[str, Any]] = Field(..., description="Chaos engineering failure scenario")
+    constraints: Optional[Union[M2Constraints, Dict[str, Any]]] = Field(None, description="Optional performance and budget constraints")
 
 
 # ============================================================================
@@ -171,7 +171,7 @@ def api_run_simulation(payload: SimulationRunRequest) -> SimulationResult:
         )
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Validation error: {str(e)}",
         )
     except Exception as e:

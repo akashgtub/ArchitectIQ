@@ -3,15 +3,15 @@
  * Handles communication with the unified FastAPI backend.
  */
 
-// Dynamically determine API base URL from Vite env or fallback to local origin
+// Dynamically determine API base URL from Vite env, window config, or fallback to backend origin
 export const API_BASE_URL = (
   (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
   (typeof window !== 'undefined' && window.__ENV__ && window.__ENV__.VITE_API_BASE_URL) ||
-  ''
+  (typeof window !== 'undefined' && window.location && window.location.port !== '8000' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://127.0.0.1:8000' : '')
 ).replace(/\/$/, '');
 
 /**
- * Common request wrapper with JSON and error handling
+ * Common request wrapper with network catch, JSON parsing, and detailed error extraction
  */
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
@@ -21,23 +21,38 @@ async function request(endpoint, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (networkErr) {
+    const error = new Error(
+      `Cannot connect to ArchitectIQ backend at ${url}. Please ensure the FastAPI server is running on port 8000 (run: uvicorn backend.main:app). Details: ${networkErr.message}`
+    );
+    error.status = 0;
+    error.code = 'ERR_NETWORK_DISCONNECTED';
+    error.details = { originalError: networkErr.message, url };
+    throw error;
+  }
 
   const contentType = response.headers.get('content-type') || '';
   let data = null;
 
-  if (contentType.includes('application/json')) {
-    data = await response.json();
-  } else {
-    data = await response.text();
+  try {
+    if (contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+  } catch (parseErr) {
+    data = null;
   }
 
   if (!response.ok) {
     let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-    let errorCode = 'ERR_HTTP';
+    let errorCode = `ERR_HTTP_${response.status}`;
 
     if (typeof data === 'object' && data !== null) {
       if (data.detail) {
@@ -51,6 +66,8 @@ async function request(endpoint, options = {}) {
         errorMessage = data.message;
         errorCode = data.error_code || errorCode;
       }
+    } else if (typeof data === 'string' && data.trim()) {
+      errorMessage = data.slice(0, 300);
     }
 
     const err = new Error(errorMessage);

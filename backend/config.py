@@ -103,7 +103,7 @@ class Settings(BaseModel):
         default_factory=lambda: int(os.getenv("MAX_RETRIES", "2"))
     )
     per_call_timeout_seconds: int = Field(
-        default_factory=lambda: int(os.getenv("PER_CALL_TIMEOUT_SECONDS", "30"))
+        default_factory=lambda: int(os.getenv("PER_CALL_TIMEOUT_SECONDS", "10"))
     )
 
     # Image Validation Constraints

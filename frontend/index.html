@@ -96,6 +96,7 @@
         </div>
 
         <div class="header-actions">
+          <span id="header-arch-badge" class="badge-tag" style="background: var(--bg-lavender); color: var(--color-deep);">No Architecture Loaded</span>
           <span class="badge-tag">Schema v1.0</span>
           <span class="badge-tag">Physics Engine</span>
         </div>
@@ -117,8 +118,9 @@
               <div class="card-title">
                 <span>Architecture Input</span>
                 <select id="preset-selector" class="form-select" style="width: auto; padding: 0.35rem 0.75rem; font-size: 0.82rem;">
-                  <option value="ecommerce">Preset: E-Commerce Microservices</option>
-                  <option value="payments">Preset: FinTech Payments Gateway</option>
+                  <option value="">-- Or Load a Sample Preset --</option>
+                  <option value="ecommerce">Sample: E-Commerce Microservices</option>
+                  <option value="payments">Sample: FinTech Payments Gateway</option>
                 </select>
               </div>
 
@@ -185,9 +187,12 @@
             <p>Interactive graph components, provisioned capacities, replica counts, and communication channels.</p>
           </div>
 
+          <div id="topology-dependency-alert" style="display: none; margin-bottom: 1.25rem;"></div>
+
           <div class="card" style="margin-bottom: 1.5rem;">
             <div class="card-title">
               <span>Active Components</span>
+              <span id="topology-provenance-badge" class="badge-tag" style="display: none;"></span>
             </div>
             <div id="topology-container" class="topology-grid"></div>
           </div>
@@ -206,6 +211,8 @@
             <h2>Baseline Performance Simulation</h2>
             <p>Discrete-event request propagation, queuing analysis, and bottleneck detection under offered load.</p>
           </div>
+
+          <div id="simulation-dependency-alert" style="display: none; margin-bottom: 1.25rem;"></div>
 
           <div class="grid-4" style="margin-bottom: 1.5rem;">
             <div class="stat-card">
@@ -259,6 +266,8 @@
             <p>Hypothesis formulation, allowlisted diagnostic experiments, and evidence-grounded handoff generation.</p>
           </div>
 
+          <div id="investigation-dependency-alert" style="display: none; margin-bottom: 1.25rem;"></div>
+
           <div class="grid-2" style="margin-bottom: 1.5rem;">
             <div>
               <h3 style="font-size: 1.1rem; color: var(--color-deep); margin-bottom: 1rem;">Formulated Hypotheses</h3>
@@ -287,6 +296,8 @@
             <h2>Architecture Optimization Search</h2>
             <p>Multi-objective candidate exploration, topology mutation synthesis, and Pareto trade-off evaluation.</p>
           </div>
+
+          <div id="optimization-dependency-alert" style="display: none; margin-bottom: 1.25rem;"></div>
 
           <div class="card" style="margin-bottom: 1.5rem;">
             <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
@@ -340,6 +351,8 @@
             <h2>Chaos Engineering Resilience Lab</h2>
             <p>Simulate production component outages, latency spikes, and replica loss to measure system recovery.</p>
           </div>
+
+          <div id="chaos-dependency-alert" style="display: none; margin-bottom: 1.25rem;"></div>
 
           <div class="card" style="margin-bottom: 1.5rem;">
             <div class="grid-2">
