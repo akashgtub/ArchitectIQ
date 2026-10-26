@@ -58,15 +58,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API v1 router
+# Include API router
 app.include_router(api_v1_router)
 
+# Mount frontend files if available
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+frontend_src = Path(__file__).resolve().parent.parent / "frontend"
+
+if frontend_dist.is_dir() and (frontend_dist / "index.html").is_file():
+    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="frontend_assets")
+    @app.get("/", tags=["Frontend"])
+    async def serve_frontend():
+        return FileResponse(str(frontend_dist / "index.html"))
+elif frontend_src.is_dir() and (frontend_src / "index.html").is_file():
+    app.mount("/src", StaticFiles(directory=str(frontend_src / "src")), name="frontend_src")
+    @app.get("/", tags=["Frontend"])
+    async def serve_frontend():
+        return FileResponse(str(frontend_src / "index.html"))
 
 @app.get("/health", tags=["System"])
 async def root_health():
     return {
         "status": "healthy",
-        "service": "ArchPilot AI - Member 1",
+        "service": "ArchitectIQ",
         "schema_version": SCHEMA_VERSION,
     }
 

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ArchitectIQ — Autonomous System Architecture Analysis & Simulation Agent</title>
+  <meta name="description" content="Autonomous AI Agent for System Architecture Analysis, Discrete Simulation, Deterministic Optimization, and Chaos Resilience Testing.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="header">
+    <div class="header-container">
+      <a href="#" class="brand" id="brand-link">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>ArchitectIQ</h1>
+          <span>Autonomous System Design & Resilience Agent</span>
+        </div>
+      </a>
+
+      <div class="header-status">
+        <div class="status-badge" id="backend-status-badge">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">Checking Backend...</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation Workflow Tabs -->
+  <nav class="nav-tabs-wrapper">
+    <div class="nav-tabs" role="tablist">
+      <button class="nav-tab active" data-tab="tab-upload" id="nav-upload" role="tab">
+        1. Ingest & Analyze
+      </button>
+      <button class="nav-tab" data-tab="tab-topology" id="nav-topology" role="tab">
+        2. Topology & Graph
+      </button>
+      <button class="nav-tab" data-tab="tab-simulation" id="nav-simulation" role="tab">
+        3. Baseline Simulation
+      </button>
+      <button class="nav-tab" data-tab="tab-investigation" id="nav-investigation" role="tab">
+        4. Root-Cause AI
+      </button>
+      <button class="nav-tab" data-tab="tab-optimization" id="nav-optimization" role="tab">
+        5. Optimizer
+      </button>
+      <button class="nav-tab" data-tab="tab-chaos" id="nav-chaos" role="tab">
+        6. Chaos Resilience Lab
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-content">
+    <div id="global-alert" style="display: none;"></div>
+
+    <!-- TAB 1: Diagram Ingestion & Requirements -->
+    <section id="tab-upload" class="tab-panel active">
+      <div class="section-header">
+        <h2>Ingest Architecture Diagram & Requirements</h2>
+        <p>Upload a system architecture diagram image or load a production preset to extract topology, components, and communication paths.</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">
+            <span>Architecture Input</span>
+            <select id="preset-selector" class="form-select" style="width: auto; padding: 0.35rem 0.75rem; font-size: 0.8rem;">
+              <option value="ecommerce">Preset: E-Commerce Microservices</option>
+              <option value="payments">Preset: FinTech Payments Gateway</option>
+            </select>
+          </div>
+
+          <div class="dropzone" id="dropzone">
+            <svg class="dropzone-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+            </svg>
+            <div class="dropzone-text" id="dropzone-filename">Drop architecture diagram here or click to browse</div>
+            <div class="dropzone-hint">Supports PNG, JPEG, WEBP up to 10MB</div>
+            <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp" style="display: none;">
+          </div>
+
+          <div class="form-group" style="margin-top: 1.25rem;">
+            <label class="form-label" for="input-requirements">System Requirements / Text Specifications</label>
+            <textarea id="input-requirements" class="form-textarea" placeholder="Describe system SLAs, traffic growth targets, resilience expectations..."></textarea>
+          </div>
+
+          <button id="btn-analyze" class="btn btn-primary btn-full">
+            Analyze & Parse Architecture
+          </button>
+          <div id="upload-alert" style="display: none; margin-top: 1rem;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>Workload & Performance Targets</span>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="input-rps">Target Load (RPS)</label>
+              <input type="number" id="input-rps" class="form-input" value="1500" min="10" max="100000">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="input-read-ratio">Read Traffic Ratio (0 - 1.0)</label>
+              <input type="number" id="input-read-ratio" class="form-input" value="0.85" min="0" max="1.0" step="0.05">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="input-max-latency">Max p95 Latency SLA (ms)</label>
+              <input type="number" id="input-max-latency" class="form-input" value="180" min="5">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="input-budget">Max Hourly Budget ($/hr)</label>
+              <input type="number" id="input-budget" class="form-input" value="1.50" min="0.1" step="0.1">
+            </div>
+          </div>
+
+          <div class="alert alert-info" style="margin-top: 0.5rem;">
+            <div>
+              <strong>Contract Guarantee:</strong> Workload configurations and SLA constraints remain strictly immutable across baseline simulation and alternative candidate synthesis.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: Topology & Graph Visualizer -->
+    <section id="tab-topology" class="tab-panel">
+      <div class="section-header">
+        <h2>Detected Architecture Topology</h2>
+        <p>Interactive graph components, provisioned capacities, replica counts, and communication channels.</p>
+      </div>
+
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <div class="card-title">
+          <span>Active Components</span>
+        </div>
+        <div id="topology-container" class="topology-grid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>Directed Communication Links</span>
+        </div>
+        <div id="connection-summary"></div>
+      </div>
+    </section>
+
+    <!-- TAB 3: Baseline Simulation Engine -->
+    <section id="tab-simulation" class="tab-panel">
+      <div class="section-header">
+        <h2>Baseline Performance Simulation</h2>
+        <p>Discrete-event request propagation, queuing analysis, and bottleneck detection under offered load.</p>
+      </div>
+
+      <div class="grid-4" style="margin-bottom: 1.5rem;">
+        <div class="stat-card">
+          <div class="stat-header">p95 Latency</div>
+          <div class="stat-value" id="sim-p95">-- ms</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-header">Median (p50) Latency</div>
+          <div class="stat-value" id="sim-p50">-- ms</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-header">Throughput</div>
+          <div class="stat-value" id="sim-rps">-- RPS</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-header">Infrastructure Cost</div>
+          <div class="stat-value" id="sim-cost">-- /hr</div>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom: 1.5rem;">
+        <div class="card">
+          <div class="card-title">
+            <span>Component Resource Utilization & Queuing</span>
+          </div>
+          <div id="sim-component-breakdown">
+            <p style="color: var(--text-muted); font-size: 0.9rem;">Run baseline simulation to compute component-level utilization.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>Detected Capacity Bottlenecks</span>
+          </div>
+          <div id="sim-bottlenecks">
+            <p style="color: var(--text-muted); font-size: 0.9rem;">No simulation executed yet.</p>
+          </div>
+        </div>
+      </div>
+
+      <button id="btn-simulate" class="btn btn-primary">
+        Run Baseline Simulation
+      </button>
+      <div id="simulation-alert" style="display: none; margin-top: 1rem;"></div>
+    </section>
+
+    <!-- TAB 4: Root-Cause Investigation -->
+    <section id="tab-investigation" class="tab-panel">
+      <div class="section-header">
+        <h2>AI Root-Cause Investigation & Diagnostic Experiments</h2>
+        <p>Hypothesis formulation, allowlisted diagnostic experiments, and evidence-grounded handoff generation.</p>
+      </div>
+
+      <div class="grid-2" style="margin-bottom: 1.5rem;">
+        <div>
+          <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Formulated Hypotheses</h3>
+          <div id="investigation-hypotheses">
+            <p style="color: var(--text-muted); font-size: 0.9rem;">Click Start Investigation to formulate hypotheses and test them against the simulator.</p>
+          </div>
+        </div>
+
+        <div>
+          <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Executed Diagnostic Experiments</h3>
+          <div id="investigation-experiments">
+            <p style="color: var(--text-muted); font-size: 0.9rem;">Diagnostic experiments will appear here with measured metric differences.</p>
+          </div>
+        </div>
+      </div>
+
+      <button id="btn-investigate" class="btn btn-primary">
+        Start Root-Cause Investigation
+      </button>
+      <div id="investigation-alert" style="display: none; margin-top: 1rem;"></div>
+    </section>
+
+    <!-- TAB 5: Architecture Optimization -->
+    <section id="tab-optimization" class="tab-panel">
+      <div class="section-header">
+        <h2>Architecture Optimization Search</h2>
+        <p>Multi-objective candidate exploration, topology mutation synthesis, and Pareto trade-off evaluation.</p>
+      </div>
+
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+          <div class="form-group" style="margin-bottom: 0; min-width: 240px;">
+            <label class="form-label" for="select-objective">Target Optimization Objective</label>
+            <select id="select-objective" class="form-select">
+              <option value="balanced">Balanced (Optimal Trade-off)</option>
+              <option value="minimize_latency">Minimize Latency</option>
+              <option value="minimize_cost">Minimize Infrastructure Cost</option>
+              <option value="maximize_throughput">Maximize Peak Throughput</option>
+            </select>
+          </div>
+          <button id="btn-optimize" class="btn btn-primary">
+            Run Optimization Search
+          </button>
+        </div>
+        <div id="optimization-alert" style="display: none; margin-top: 1rem;"></div>
+      </div>
+
+      <div id="optimization-recommended"></div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>Ranked Candidate Architectures</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Candidate Name</th>
+                <th>p95 Latency</th>
+                <th>Throughput</th>
+                <th>Monthly Cost</th>
+                <th>Evaluation</th>
+              </tr>
+            </thead>
+            <tbody id="optimization-table-body">
+              <tr>
+                <td colspan="6" style="text-align: center; color: var(--text-muted);">No optimization candidates evaluated yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 6: Chaos Resilience Lab -->
+    <section id="tab-chaos" class="tab-panel">
+      <div class="section-header">
+        <h2>Chaos Engineering Resilience Lab</h2>
+        <p>Simulate production component outages, latency spikes, and replica loss to measure system recovery.</p>
+      </div>
+
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <div class="grid-2">
+          <div class="form-group">
+            <label class="form-label" for="select-chaos-type">Failure Injection Scenario</label>
+            <select id="select-chaos-type" class="form-select">
+              <option value="db_slowdown">Database Slowdown (3x query overhead)</option>
+              <option value="api_crash">API Server Crash (Replica Loss / SPOF)</option>
+              <option value="cache_outage">Cache Tier Outage (100% read bypass)</option>
+              <option value="traffic_spike">Sudden Traffic Spike (2.5x burst RPS)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="select-chaos-target">Target Component</label>
+            <select id="select-chaos-target" class="form-select"></select>
+          </div>
+        </div>
+
+        <button id="btn-chaos" class="btn btn-danger">
+          Inject Failure & Simulate Resilience
+        </button>
+        <div id="chaos-alert" style="display: none; margin-top: 1rem;"></div>
+      </div>
+
+      <div id="chaos-results-container"></div>
+    </section>
+
+  </main>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

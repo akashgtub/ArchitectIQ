@@ -1,0 +1,698 @@
+/**
+ * ArchitectIQ - Autonomous AI Agent Frontend Application Controller
+ * Wires the interactive UI to the FastAPI backend endpoints.
+ */
+
+import { api } from './api.js';
+
+// Predefined Real-World Architecture Presets
+const PRESET_ARCHITECTURES = {
+  ecommerce: {
+    name: "E-Commerce Microservices Platform",
+    architecture_id: "arch-ecommerce-01",
+    components: [
+      { id: "lb-1", type: "load_balancer", name: "Public Ingress LB", capacity_rps: 5000, replicas: 2, base_latency_ms: 2.0, cost_per_month_usd: 50.0 },
+      { id: "api-gateway", type: "api_server", name: "Storefront Gateway", capacity_rps: 1200, replicas: 3, base_latency_ms: 12.0, cost_per_month_usd: 120.0 },
+      { id: "cache-redis", type: "cache", name: "Product Catalog Cache", capacity_rps: 8000, replicas: 1, base_latency_ms: 1.5, cost_per_month_usd: 60.0, cache_hit_ratio: 0.85 },
+      { id: "db-primary", type: "database", name: "PostgreSQL Primary", capacity_rps: 800, replicas: 1, base_latency_ms: 25.0, cost_per_month_usd: 140.0 },
+      { id: "queue-orders", type: "message_broker", name: "RabbitMQ Orders", capacity_rps: 4000, replicas: 1, base_latency_ms: 4.0, cost_per_month_usd: 35.0 },
+      { id: "worker-billing", type: "api_server", name: "Billing Consumer", capacity_rps: 600, replicas: 2, base_latency_ms: 30.0, cost_per_month_usd: 80.0 }
+    ],
+    connections: [
+      { source: "lb-1", target: "api-gateway", protocol: "http", latency_overhead_ms: 1.0 },
+      { source: "api-gateway", target: "cache-redis", protocol: "redis", latency_overhead_ms: 1.2 },
+      { source: "api-gateway", target: "db-primary", protocol: "sql", latency_overhead_ms: 2.0 },
+      { source: "api-gateway", target: "queue-orders", protocol: "amqp", latency_overhead_ms: 1.5 },
+      { source: "queue-orders", target: "worker-billing", protocol: "amqp", latency_overhead_ms: 1.5 }
+    ],
+    workload: {
+      requests_per_second: 1500,
+      read_ratio: 0.85,
+      write_ratio: 0.15,
+      duration_seconds: 10,
+      burst_multiplier: 2.0
+    },
+    constraints: {
+      max_p95_latency_ms: 180,
+      min_throughput_rps: 1400,
+      max_cost_per_hour: 1.50
+    }
+  },
+  payments: {
+    name: "FinTech High-Assurance Payments Gateway",
+    architecture_id: "arch-payments-02",
+    components: [
+      { id: "waf-gateway", type: "load_balancer", name: "Cloudflare / WAF Gateway", capacity_rps: 4000, replicas: 2, base_latency_ms: 3.0, cost_per_month_usd: 60.0 },
+      { id: "payment-api", type: "api_server", name: "Card Authorization Service", capacity_rps: 1000, replicas: 2, base_latency_ms: 18.0, cost_per_month_usd: 100.0 },
+      { id: "ledger-db", type: "database", name: "Aurora PostgreSQL Ledger", capacity_rps: 600, replicas: 1, base_latency_ms: 35.0, cost_per_month_usd: 220.0 }
+    ],
+    connections: [
+      { source: "waf-gateway", target: "payment-api", protocol: "http", latency_overhead_ms: 1.5 },
+      { source: "payment-api", target: "ledger-db", protocol: "sql", latency_overhead_ms: 2.5 }
+    ],
+    workload: {
+      requests_per_second: 800,
+      read_ratio: 0.3,
+      write_ratio: 0.7,
+      duration_seconds: 10,
+      burst_multiplier: 1.5
+    },
+    constraints: {
+      max_p95_latency_ms: 120,
+      min_throughput_rps: 750,
+      max_cost_per_hour: 2.00
+    }
+  }
+};
+
+// Global Application State
+const state = {
+  currentArchitecture: PRESET_ARCHITECTURES.ecommerce,
+  currentInvestigation: null,
+  baselineResult: null,
+  optimizationResult: null,
+  chaosResult: null,
+  selectedFile: null,
+};
+
+// ============================================================================
+// Initialization & Navigation
+// ============================================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+  initTabs();
+  initPresetSelector();
+  initUploadDropzone();
+  initActionButtons();
+  checkBackendHealth();
+  renderTopology();
+});
+
+function initTabs() {
+  const tabs = document.querySelectorAll('.nav-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const targetId = tab.dataset.tab;
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+
+      tab.classList.add('active');
+      const panel = document.getElementById(targetId);
+      if (panel) panel.classList.add('active');
+    });
+  });
+}
+
+async function checkBackendHealth() {
+  const statusDot = document.getElementById('status-dot');
+  const statusText = document.getElementById('status-text');
+  try {
+    const health = await api.checkHealth();
+    if (statusDot && statusText) {
+      statusDot.style.background = '#10b981';
+      statusText.textContent = `Backend Connected (${health.schema_version || 'v1.0'})`;
+    }
+  } catch (err) {
+    if (statusDot && statusText) {
+      statusDot.style.background = '#f43f5e';
+      statusText.textContent = 'Backend Offline';
+    }
+    showAlert('global-alert', `Backend service connection warning: ${err.message}. Ensure backend is running on port 8000.`, 'warning');
+  }
+}
+
+// ============================================================================
+// Presets & Form Handling
+// ============================================================================
+
+function initPresetSelector() {
+  const select = document.getElementById('preset-selector');
+  if (!select) return;
+
+  select.addEventListener('change', (e) => {
+    const presetKey = e.target.value;
+    if (PRESET_ARCHITECTURES[presetKey]) {
+      state.currentArchitecture = JSON.parse(JSON.stringify(PRESET_ARCHITECTURES[presetKey]));
+      populateFormFromArchitecture(state.currentArchitecture);
+      renderTopology();
+      showAlert('upload-alert', `Loaded preset: ${state.currentArchitecture.name}`, 'info');
+    }
+  });
+
+  // Populate initial values
+  populateFormFromArchitecture(state.currentArchitecture);
+}
+
+function populateFormFromArchitecture(arch) {
+  const rpsInput = document.getElementById('input-rps');
+  const readRatioInput = document.getElementById('input-read-ratio');
+  const latencyConstraint = document.getElementById('input-max-latency');
+  const budgetConstraint = document.getElementById('input-budget');
+
+  if (rpsInput && arch.workload) rpsInput.value = arch.workload.requests_per_second;
+  if (readRatioInput && arch.workload) readRatioInput.value = arch.workload.read_ratio;
+  if (latencyConstraint && arch.constraints) latencyConstraint.value = arch.constraints.max_p95_latency_ms || '';
+  if (budgetConstraint && arch.constraints) budgetConstraint.value = arch.constraints.max_cost_per_hour || '';
+}
+
+function initUploadDropzone() {
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('file-input');
+
+  if (!dropzone || !fileInput) return;
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.classList.add('drag-over');
+  });
+
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileSelected(e.dataTransfer.files[0]);
+    }
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleFileSelected(e.target.files[0]);
+    }
+  });
+}
+
+function handleFileSelected(file) {
+  state.selectedFile = file;
+  const dropzoneText = document.getElementById('dropzone-filename');
+  if (dropzoneText) {
+    dropzoneText.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+  }
+}
+
+// ============================================================================
+// Actions & Workflow Execution
+// ============================================================================
+
+function initActionButtons() {
+  // Analyze diagram button
+  const btnAnalyze = document.getElementById('btn-analyze');
+  if (btnAnalyze) {
+    btnAnalyze.addEventListener('click', executeDiagramAnalysis);
+  }
+
+  // Run simulation button
+  const btnSimulate = document.getElementById('btn-simulate');
+  if (btnSimulate) {
+    btnSimulate.addEventListener('click', executeBaselineSimulation);
+  }
+
+  // Start investigation button
+  const btnInvestigate = document.getElementById('btn-investigate');
+  if (btnInvestigate) {
+    btnInvestigate.addEventListener('click', executeRootCauseInvestigation);
+  }
+
+  // Run optimization button
+  const btnOptimize = document.getElementById('btn-optimize');
+  if (btnOptimize) {
+    btnOptimize.addEventListener('click', executeOptimization);
+  }
+
+  // Run chaos resilience button
+  const btnChaos = document.getElementById('btn-chaos');
+  if (btnChaos) {
+    btnChaos.addEventListener('click', executeChaosSimulation);
+  }
+}
+
+// 1. Diagram Analysis
+async function executeDiagramAnalysis() {
+  const btn = document.getElementById('btn-analyze');
+  setLoading(btn, true, 'Analyzing with AI...');
+  hideAlert('upload-alert');
+
+  try {
+    const requirements = document.getElementById('input-requirements')?.value || '';
+    const rps = parseFloat(document.getElementById('input-rps')?.value || '1000');
+    const readRatio = parseFloat(document.getElementById('input-read-ratio')?.value || '0.8');
+    const writeRatio = Math.max(0, 1.0 - readRatio);
+
+    const workload = { requests_per_second: rps, read_ratio: readRatio, write_ratio: writeRatio };
+    const constraints = {
+      max_p95_latency_ms: parseFloat(document.getElementById('input-max-latency')?.value || '200'),
+      max_cost_per_hour: parseFloat(document.getElementById('input-budget')?.value || '2.0')
+    };
+
+    const res = await api.analyzeArchitecture({
+      imageFile: state.selectedFile,
+      requirements,
+      workload,
+      constraints
+    });
+
+    if (res.architecture) {
+      state.currentArchitecture = res.architecture;
+      renderTopology();
+      showAlert('upload-alert', `Architecture successfully parsed! Extracted ${res.architecture.components.length} components and ${res.architecture.connections.length} connections.`, 'success');
+      // Switch to topology tab
+      switchTab('tab-topology');
+    } else {
+      showAlert('upload-alert', `Analysis complete: ${res.status}. Review observations.`, 'info');
+    }
+  } catch (err) {
+    showAlert('upload-alert', `Analysis failed: ${err.message}`, 'danger');
+  } finally {
+    setLoading(btn, false, 'Analyze & Parse Architecture');
+  }
+}
+
+// 2. Baseline Simulation
+async function executeBaselineSimulation() {
+  const btn = document.getElementById('btn-simulate');
+  setLoading(btn, true, 'Running Discrete Simulation...');
+  hideAlert('simulation-alert');
+
+  try {
+    const arch = state.currentArchitecture;
+    const rps = parseFloat(document.getElementById('input-rps')?.value || arch.workload.requests_per_second);
+    const readRatio = parseFloat(document.getElementById('input-read-ratio')?.value || arch.workload.read_ratio);
+
+    const workloadConfig = {
+      requests_per_second: rps,
+      read_ratio: readRatio,
+      duration_seconds: 10.0,
+      pattern: "constant",
+      burst_multiplier: 1.5
+    };
+
+    const constraints = arch.constraints ? {
+      max_p95_latency_ms: arch.constraints.max_p95_latency_ms,
+      min_throughput_rps: arch.constraints.min_throughput_rps,
+      monthly_budget_usd: (arch.constraints.max_cost_per_hour || 2.0) * 730
+    } : null;
+
+    const res = await api.runBaselineSimulation({
+      architecture: arch,
+      workload: workloadConfig,
+      constraints
+    });
+
+    state.baselineResult = res;
+    renderSimulationResults(res);
+    showAlert('simulation-alert', 'Baseline simulation completed successfully with deterministic physics engine.', 'success');
+  } catch (err) {
+    showAlert('simulation-alert', `Simulation error: ${err.message}`, 'danger');
+  } finally {
+    setLoading(btn, false, 'Run Baseline Simulation');
+  }
+}
+
+// 3. Root-Cause Investigation
+async function executeRootCauseInvestigation() {
+  const btn = document.getElementById('btn-investigate');
+  setLoading(btn, true, 'Diagnosing Bottlenecks...');
+  hideAlert('investigation-alert');
+
+  try {
+    const arch = state.currentArchitecture;
+    // Ensure workload format matches Member 1 canonical schema
+    const m1Arch = {
+      schema_version: "1.0",
+      architecture_id: arch.architecture_id || "arch-inv-01",
+      components: arch.components.map(c => ({
+        id: c.id,
+        type: c.type,
+        name: c.name || c.id,
+        attributes: { cpu_cores: 2, capacity_rps: c.capacity_rps, replicas: c.replicas }
+      })),
+      connections: arch.connections.map(cn => ({
+        source: cn.source,
+        target: cn.target,
+        type: "request"
+      })),
+      workload: {
+        requests_per_second: parseFloat(document.getElementById('input-rps')?.value || arch.workload?.requests_per_second || 1000),
+        read_ratio: parseFloat(document.getElementById('input-read-ratio')?.value || arch.workload?.read_ratio || 0.8),
+        write_ratio: 1.0 - parseFloat(document.getElementById('input-read-ratio')?.value || arch.workload?.read_ratio || 0.8)
+      },
+      constraints: {
+        max_p95_latency_ms: parseFloat(document.getElementById('input-max-latency')?.value || 200)
+      }
+    };
+
+    const res = await api.startInvestigation({
+      architecture: m1Arch,
+      maxExperiments: 3
+    });
+
+    state.currentInvestigation = res;
+    renderInvestigationResults(res);
+    showAlert('investigation-alert', `Investigation complete! Formulated hypotheses and executed targeted diagnostic experiments.`, 'success');
+  } catch (err) {
+    showAlert('investigation-alert', `Investigation failed: ${err.message}`, 'danger');
+  } finally {
+    setLoading(btn, false, 'Start Root-Cause Investigation');
+  }
+}
+
+// 4. Architecture Optimization
+async function executeOptimization() {
+  const btn = document.getElementById('btn-optimize');
+  setLoading(btn, true, 'Exploring Candidates...');
+  hideAlert('optimization-alert');
+
+  try {
+    const arch = state.currentArchitecture;
+    const objective = document.getElementById('select-objective')?.value || 'balanced';
+
+    const workloadConfig = {
+      requests_per_second: parseFloat(document.getElementById('input-rps')?.value || arch.workload.requests_per_second),
+      read_ratio: parseFloat(document.getElementById('input-read-ratio')?.value || arch.workload.read_ratio),
+      duration_seconds: 10.0,
+      pattern: "constant"
+    };
+
+    const res = await api.runOptimization({
+      architecture: arch,
+      workload: workloadConfig,
+      objective,
+      maxCandidates: 6
+    });
+
+    state.optimizationResult = res;
+    renderOptimizationResults(res);
+    showAlert('optimization-alert', `Evaluated ${res.total_candidates_evaluated} candidates. Best candidate recommended under ${objective} objective.`, 'success');
+  } catch (err) {
+    showAlert('optimization-alert', `Optimization failed: ${err.message}`, 'danger');
+  } finally {
+    setLoading(btn, false, 'Run Optimization Search');
+  }
+}
+
+// 5. Chaos Resilience Simulation
+async function executeChaosSimulation() {
+  const btn = document.getElementById('btn-chaos');
+  setLoading(btn, true, 'Injecting Fault...');
+  hideAlert('chaos-alert');
+
+  try {
+    const arch = state.currentArchitecture;
+    const failureType = document.getElementById('select-chaos-type')?.value || 'db_slowdown';
+    const targetComp = document.getElementById('select-chaos-target')?.value || (arch.components[1] ? arch.components[1].id : arch.components[0].id);
+
+    const scenario = {
+      name: `Resilience Fault: ${failureType}`,
+      failure_type: failureType,
+      target_component_id: failureType === 'traffic_spike' ? null : targetComp,
+      start_time_sec: 2.0,
+      duration_sec: 6.0,
+      degradation_factor: 3.0
+    };
+
+    const workloadConfig = {
+      requests_per_second: parseFloat(document.getElementById('input-rps')?.value || arch.workload.requests_per_second),
+      read_ratio: parseFloat(document.getElementById('input-read-ratio')?.value || arch.workload.read_ratio),
+      duration_seconds: 10.0,
+      pattern: "constant"
+    };
+
+    const res = await api.runChaos({
+      architecture: arch,
+      workload: workloadConfig,
+      scenario
+    });
+
+    state.chaosResult = res;
+    renderChaosResults(res);
+    showAlert('chaos-alert', `Resilience experiment complete. Compared degraded metrics against baseline.`, 'success');
+  } catch (err) {
+    showAlert('chaos-alert', `Chaos experiment failed: ${err.message}`, 'danger');
+  } finally {
+    setLoading(btn, false, 'Inject Failure & Simulate Resilience');
+  }
+}
+
+// ============================================================================
+// Renderers
+// ============================================================================
+
+function renderTopology() {
+  const container = document.getElementById('topology-container');
+  const chaosSelect = document.getElementById('select-chaos-target');
+  if (!container) return;
+
+  const arch = state.currentArchitecture;
+  container.innerHTML = '';
+
+  if (chaosSelect) {
+    chaosSelect.innerHTML = '';
+  }
+
+  arch.components.forEach(comp => {
+    const card = document.createElement('div');
+    card.className = 'comp-card';
+    card.innerHTML = `
+      <div class="comp-header">
+        <span class="comp-id">${comp.id}</span>
+        <span class="comp-type-badge ${comp.type}">${comp.type}</span>
+      </div>
+      <div style="font-size: 0.85rem; font-weight: 500; color: #cbd5e1;">${comp.name || comp.id}</div>
+      <div class="comp-stats">
+        <div>Capacity: <strong>${comp.capacity_rps} RPS</strong> &times; ${comp.replicas} replica(s)</div>
+        <div>Base Latency: <strong>${comp.base_latency_ms} ms</strong></div>
+        <div>Cost: <strong>$${comp.cost_per_month_usd || 0}/mo</strong></div>
+        ${comp.cache_hit_ratio !== undefined && comp.cache_hit_ratio !== null ? `<div>Cache Hit Ratio: <strong>${(comp.cache_hit_ratio * 100).toFixed(0)}%</strong></div>` : ''}
+      </div>
+    `;
+    container.appendChild(card);
+
+    if (chaosSelect) {
+      const opt = document.createElement('option');
+      opt.value = comp.id;
+      opt.textContent = `${comp.id} (${comp.type})`;
+      chaosSelect.appendChild(opt);
+    }
+  });
+
+  const connSummary = document.getElementById('connection-summary');
+  if (connSummary) {
+    connSummary.innerHTML = arch.connections.map(c => `
+      <span style="display:inline-block; padding: 0.25rem 0.6rem; background: rgba(255,255,255,0.04); border-radius: 4px; font-size: 0.8rem; margin: 0.2rem;">
+        <code>${c.source}</code> &rarr; <code>${c.target}</code> <small style="color:var(--text-muted)">(${c.protocol || 'http'})</small>
+      </span>
+    `).join('');
+  }
+}
+
+function renderSimulationResults(res) {
+  const p95El = document.getElementById('sim-p95');
+  const p50El = document.getElementById('sim-p50');
+  const rpsEl = document.getElementById('sim-rps');
+  const costEl = document.getElementById('sim-cost');
+  const breakdownContainer = document.getElementById('sim-component-breakdown');
+  const bottlenecksContainer = document.getElementById('sim-bottlenecks');
+
+  const m = res.metrics;
+  if (p95El) p95El.textContent = `${m.p95_latency_ms.toFixed(1)} ms`;
+  if (p50El) p50El.textContent = `${m.p50_latency_ms.toFixed(1)} ms`;
+  if (rpsEl) rpsEl.textContent = `${m.throughput_rps.toFixed(0)} RPS`;
+  if (costEl) costEl.textContent = `$${(m.total_monthly_cost_usd / 730).toFixed(2)}/hr`;
+
+  // Component breakdown
+  if (breakdownContainer && m.component_breakdown) {
+    breakdownContainer.innerHTML = Object.entries(m.component_breakdown).map(([id, cm]) => {
+      const utilPct = Math.min(100, (cm.utilization * 100)).toFixed(1);
+      const isOverloaded = cm.utilization >= 0.8;
+      return `
+        <div style="margin-bottom: 0.85rem;">
+          <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:0.25rem;">
+            <span><strong>${id}</strong> <small style="color:var(--text-muted)">(${cm.component_type})</small></span>
+            <span style="font-family:var(--font-mono); color:${isOverloaded ? 'var(--accent-amber)' : 'inherit'}">${utilPct}% CPU | ${cm.total_latency_ms.toFixed(1)}ms</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill ${isOverloaded ? 'warning' : ''}" style="width: ${utilPct}%"></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Bottlenecks
+  if (bottlenecksContainer) {
+    if (res.bottlenecks && res.bottlenecks.length > 0) {
+      bottlenecksContainer.innerHTML = res.bottlenecks.map(b => `
+        <div class="alert alert-warning" style="margin-bottom: 0.5rem;">
+          <div>
+            <strong>${b.component_id}</strong> (${b.severity.toUpperCase()}): ${b.reason}
+            <div style="font-size:0.8rem; margin-top:0.2rem; color:#fef3c7;">Mitigation: ${b.recommended_action}</div>
+          </div>
+        </div>
+      `).join('');
+    } else {
+      bottlenecksContainer.innerHTML = `<div class="alert alert-success">No capacity bottlenecks detected under baseline load.</div>`;
+    }
+  }
+}
+
+function renderInvestigationResults(res) {
+  const hypothesesContainer = document.getElementById('investigation-hypotheses');
+  const experimentsContainer = document.getElementById('investigation-experiments');
+
+  const rca = res.root_cause_analysis;
+  if (!rca) return;
+
+  if (hypothesesContainer && rca.hypotheses) {
+    hypothesesContainer.innerHTML = rca.hypotheses.map(hyp => {
+      const isConfirmed = hyp.status === 'confirmed';
+      return `
+        <div class="card" style="margin-bottom: 1rem; border-left: 4px solid ${isConfirmed ? 'var(--accent-emerald)' : 'var(--accent-amber)'};">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.4rem;">
+            <h4 style="font-size: 1rem;">${hyp.title}</h4>
+            <span class="status-badge" style="background:${isConfirmed ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)'}">${hyp.status.toUpperCase()}</span>
+          </div>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">${hyp.description}</p>
+          <div style="font-size: 0.8rem; color: #a5b4fc;">
+            Confidence: <strong>${hyp.confidence_label.toUpperCase()}</strong> | Affected: <code>${hyp.affected_components.join(', ')}</code>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  if (experimentsContainer && rca.experiments) {
+    experimentsContainer.innerHTML = rca.experiments.map(exp => `
+      <div style="background: rgba(255,255,255,0.02); padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 0.75rem; border: 1px solid var(--border-glass);">
+        <div style="display:flex; justify-content:space-between; font-size:0.85rem; margin-bottom:0.25rem;">
+          <strong>Experiment: ${exp.experiment_id}</strong>
+          <span style="font-family:var(--font-mono); color:var(--accent-cyan);">${exp.source}</span>
+        </div>
+        ${exp.diff_from_baseline.map(d => `
+          <div style="font-size:0.8rem; margin-top:0.25rem;">
+            &bull; <strong>${d.metric_name}:</strong> Baseline: ${d.baseline_value}${d.unit} &rarr; Diagnostic: ${d.diagnostic_value}${d.unit}
+            (${d.diff_pct !== null ? `${d.diff_pct > 0 ? '+' : ''}${d.diff_pct}%` : ''}) - <span style="color:var(--text-muted)">${d.interpretation}</span>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+  }
+}
+
+function renderOptimizationResults(res) {
+  const recContainer = document.getElementById('optimization-recommended');
+  const tableBody = document.getElementById('optimization-table-body');
+
+  const rec = res.recommended_candidate;
+  if (recContainer && rec) {
+    recContainer.innerHTML = `
+      <div class="card" style="border: 1px solid var(--accent-emerald); background: rgba(16, 185, 129, 0.05); margin-bottom: 1.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.5rem;">
+          <h3 style="color: var(--accent-emerald);">Recommended: ${rec.name}</h3>
+          <span class="status-badge" style="background: rgba(16, 185, 129, 0.2); color:#6ee7b7;">Rank #1</span>
+        </div>
+        <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:0.75rem;">${rec.description}</p>
+        <div class="grid-3">
+          <div class="stat-card" style="background:transparent; padding:0.5rem;">
+            <div class="stat-header">p95 Latency</div>
+            <div class="stat-value" style="font-size:1.3rem;">${rec.metrics.p95_latency_ms.toFixed(1)} ms</div>
+          </div>
+          <div class="stat-card" style="background:transparent; padding:0.5rem;">
+            <div class="stat-header">Throughput</div>
+            <div class="stat-value" style="font-size:1.3rem;">${rec.metrics.throughput_rps.toFixed(0)} RPS</div>
+          </div>
+          <div class="stat-card" style="background:transparent; padding:0.5rem;">
+            <div class="stat-header">Monthly Cost</div>
+            <div class="stat-value" style="font-size:1.3rem;">$${rec.metrics.total_monthly_cost_usd.toFixed(0)}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (tableBody && res.ranked_candidates) {
+    tableBody.innerHTML = res.ranked_candidates.map((cand, idx) => `
+      <tr>
+        <td>#${idx + 1}</td>
+        <td><strong>${cand.name}</strong></td>
+        <td>${cand.metrics.p95_latency_ms.toFixed(1)} ms</td>
+        <td>${cand.metrics.throughput_rps.toFixed(0)} RPS</td>
+        <td>$${cand.metrics.total_monthly_cost_usd.toFixed(0)}/mo</td>
+        <td><span class="status-badge" style="background:rgba(255,255,255,0.06)">Score: ${cand.score.toFixed(3)}</span></td>
+      </tr>
+    `).join('');
+  }
+}
+
+function renderChaosResults(res) {
+  const container = document.getElementById('chaos-results-container');
+  if (!container) return;
+
+  const base = res.baseline_metrics;
+  const fail = res.failure_metrics;
+
+  container.innerHTML = `
+    <div class="grid-3" style="margin-bottom: 1.5rem;">
+      <div class="stat-card">
+        <div class="stat-header">Latency Delta</div>
+        <div class="stat-value ${res.latency_delta_ms > 0 ? 'delta-bad' : 'delta-good'}">
+          ${res.latency_delta_ms > 0 ? '+' : ''}${res.latency_delta_ms.toFixed(1)} ms
+        </div>
+        <div style="font-size:0.8rem; color:var(--text-muted)">Baseline: ${base.p95_latency_ms.toFixed(1)}ms &rarr; Degraded: ${fail.p95_latency_ms.toFixed(1)}ms</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-header">Throughput Drop</div>
+        <div class="stat-value ${res.throughput_delta_rps < 0 ? 'delta-bad' : 'delta-good'}">
+          ${res.throughput_delta_rps.toFixed(0)} RPS
+        </div>
+        <div style="font-size:0.8rem; color:var(--text-muted)">Baseline: ${base.throughput_rps.toFixed(0)} RPS &rarr; Degraded: ${fail.throughput_rps.toFixed(0)} RPS</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-header">Resilience Rating</div>
+        <div class="stat-value" style="color:var(--accent-cyan)">
+          ${fail.error_rate < 0.05 ? 'RESILIENT' : 'VULNERABLE'}
+        </div>
+        <div style="font-size:0.8rem; color:var(--text-muted)">Error Rate: ${(fail.error_rate * 100).toFixed(1)}%</div>
+      </div>
+    </div>
+    <div class="alert alert-info">
+      <div>
+        <strong>Resilience Observation:</strong> ${res.resilience_summary || 'Component failure successfully injected and measured.'}
+      </div>
+    </div>
+  `;
+}
+
+// ============================================================================
+// Utilities
+// ============================================================================
+
+function switchTab(tabId) {
+  const tabBtn = document.querySelector(`.nav-tab[data-tab="${tabId}"]`);
+  if (tabBtn) tabBtn.click();
+}
+
+function setLoading(button, isLoading, text) {
+  if (!button) return;
+  button.disabled = isLoading;
+  if (isLoading) {
+    button.innerHTML = `<span class="spinner"></span> ${text}`;
+  } else {
+    button.textContent = text;
+  }
+}
+
+function showAlert(containerId, message, type = 'info') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.className = `alert alert-${type}`;
+  container.textContent = message;
+  container.style.display = 'block';
+}
+
+function hideAlert(containerId) {
+  const container = document.getElementById(containerId);
+  if (container) container.style.display = 'none';
+}
