@@ -98,14 +98,24 @@ class SimulationEngine:
         component: Component,
         offered_rps: float,
         current_queue_depth: float,
+        is_write: bool = False,
     ) -> float:
-        """Calculate estimated queue wait time in milliseconds using M/M/c approximation."""
-        eff_capacity = component.capacity_rps * component.replicas
+        """Calculate estimated queue wait time in milliseconds using M/M/c approximation.
+
+        For databases on write requests, write capacity is constrained to the primary replica (1 replica),
+        as standard single-primary replication does not scale write throughput via read replicas.
+        """
+        if component.type == ComponentType.DATABASE and is_write:
+            replicas = 1
+            eff_capacity = component.capacity_rps
+        else:
+            replicas = component.replicas
+            eff_capacity = component.capacity_rps * replicas
+
         if eff_capacity <= 0:
             return 10000.0
 
         utilization = offered_rps / eff_capacity
-        replicas = component.replicas
 
         if utilization < 0.99:
             # M/M/c approximation for expected queue waiting time Wq
@@ -174,7 +184,10 @@ class SimulationEngine:
                 stats = component_stats[c_id]
                 stats["offered_count"] += 1
 
-                eff_capacity = curr_component.capacity_rps * curr_component.replicas
+                if curr_component.type == ComponentType.DATABASE and not req.is_read:
+                    eff_capacity = curr_component.capacity_rps
+                else:
+                    eff_capacity = curr_component.capacity_rps * curr_component.replicas
 
                 # Check queue overflow
                 if stats["current_queue"] >= curr_component.max_queue_size:
@@ -185,7 +198,7 @@ class SimulationEngine:
 
                 # Calculate service time & queue delay
                 svc_time = curr_component.base_latency_ms
-                # Add slight write overhead for database persistence (1.2x base)
+                # Add slight write overhead for database persistence (1.25x base)
                 if curr_component.type == ComponentType.DATABASE and not req.is_read:
                     svc_time *= 1.25
 
@@ -194,6 +207,7 @@ class SimulationEngine:
                     curr_component,
                     current_rate,
                     stats["current_queue"],
+                    is_write=(not req.is_read),
                 )
 
                 hop_latency = svc_time + queue_wait
