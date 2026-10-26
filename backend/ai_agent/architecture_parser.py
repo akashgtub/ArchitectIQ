@@ -92,8 +92,12 @@ class ArchitectureParserService:
                 status = "validation_failed"
 
         provider_obj = getattr(self.model_client, "provider", None)
-        provider_name = provider_obj.name if provider_obj else ("deterministic_fallback" if self.model_client.use_mock else "gemma")
-        is_fallback = self.model_client.use_mock or (provider_name == "deterministic_fallback")
+        is_fallback = (
+            self.model_client.use_mock
+            or bool(raw_extraction.get("fallback_used"))
+            or (provider_obj and provider_obj.name == "deterministic_fallback")
+        )
+        provider_name = "deterministic_fallback" if is_fallback else (provider_obj.name if provider_obj else "gemma")
 
         return ArchitectureAnalyzeResponse(
             architecture_id=arch_id,

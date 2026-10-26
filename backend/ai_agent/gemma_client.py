@@ -180,10 +180,33 @@ class GemmaClient:
                 user_workload=user_workload,
                 user_constraints=user_constraints,
             )
-        except ModelClientError:
+        except ModelClientError as e:
+            if settings.allow_ai_fallback:
+                logger.warning(
+                    "AI provider extraction failed (%s). Falling back to deterministic fallback extraction.",
+                    e,
+                )
+                res = self._generate_mock_extraction(
+                    user_requirements=user_requirements,
+                    user_workload=user_workload,
+                    user_constraints=user_constraints,
+                )
+                res["fallback_used"] = True
+                res["fallback_reason"] = str(e)
+                return res
             raise
         except Exception as e:
             logger.warning("AI provider extraction failed: %s", e)
+            if settings.allow_ai_fallback:
+                logger.warning("Falling back to deterministic fallback extraction.")
+                res = self._generate_mock_extraction(
+                    user_requirements=user_requirements,
+                    user_workload=user_workload,
+                    user_constraints=user_constraints,
+                )
+                res["fallback_used"] = True
+                res["fallback_reason"] = str(e)
+                return res
             raise ModelClientError(
                 f"Failed to extract architecture via provider '{target_provider.name}': {e}",
                 code="ERR_MODEL_EXTRACTION_FAILED",
