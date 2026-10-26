@@ -91,6 +91,7 @@ from backend.ai_agent.providers import (
     DeterministicFallbackProvider,
     GeminiProvider,
     GemmaProvider,
+    HuggingFaceProvider,
     ModelClientError,
     get_ai_provider,
 )
@@ -98,7 +99,7 @@ from backend.ai_agent.providers import (
 
 class GemmaClient:
     """
-    Client for interacting with Google Gemma / Gemini API models.
+    Client for interacting with Google Gemma / Gemini API models and Hugging Face Inference Providers.
     Supports clean BaseAIProvider abstraction, bounded retries,
     structured JSON extraction, and explicit transparent mock fallback.
     """
@@ -112,21 +113,29 @@ class GemmaClient:
     ):
         if provider:
             self.provider = provider
-            self.api_key = getattr(provider, "api_key", api_key or settings.gemini_api_key)
+            self.api_key = getattr(provider, "api_key", getattr(provider, "api_token", api_key or settings.gemini_api_key))
             self.model_id = provider.model_name
             self.use_mock = provider.name == "deterministic_fallback"
         else:
-            self.api_key = api_key if api_key is not None else (settings.gemma_api_key or settings.gemini_api_key)
+            self.api_key = api_key if api_key is not None else (settings.gemma_api_key or settings.gemini_api_key or settings.hf_token)
             self.model_id = model_id if model_id is not None else (
-                settings.gemma_model_id if "gemma" in (settings.ai_provider or "") else settings.gemini_model_id
+                settings.hf_model if settings.ai_provider in ("huggingface", "hf") else (
+                    settings.gemma_model_id if "gemma" in (settings.ai_provider or "") else settings.gemini_model_id
+                )
             )
             if use_mock is not None:
                 self.use_mock = use_mock
             else:
-                self.use_mock = not bool(self.api_key or settings.gemma_base_url)
+                self.use_mock = not bool(self.api_key or settings.gemma_base_url or settings.hf_token)
 
             if self.use_mock:
                 self.provider = DeterministicFallbackProvider()
+            elif settings.ai_provider in ("huggingface", "hf"):
+                self.provider = HuggingFaceProvider(
+                    api_token=settings.hf_token,
+                    model_id=settings.hf_model,
+                    base_url=settings.hf_base_url,
+                )
             elif "gemma" in self.model_id.lower() or settings.gemma_base_url or settings.ai_provider == "gemma":
                 self.provider = GemmaProvider(api_key=self.api_key, model_id=self.model_id, base_url=settings.gemma_base_url)
             else:
@@ -145,6 +154,8 @@ class GemmaClient:
         """
         Extracts structured architecture from image and requirements.
         Uses the configured AI provider with bounded retries.
+        If image_bytes is provided and current provider is text-only,
+        routes image extraction to a vision-capable provider.
         """
         if self.use_mock or self.provider.name == "deterministic_fallback":
             return self._generate_mock_extraction(
@@ -153,8 +164,16 @@ class GemmaClient:
                 user_constraints=user_constraints,
             )
 
+        target_provider = self.provider
+        if image_bytes and not self.provider.supports_vision:
+            logger.info(
+                "Active provider '%s' is text-only. Routing image parsing to vision-capable provider.",
+                self.provider.name,
+            )
+            target_provider = get_ai_provider(task="vision")
+
         try:
-            return await self.provider.extract_architecture(
+            return await target_provider.extract_architecture(
                 image_bytes=image_bytes,
                 image_format=image_format,
                 user_requirements=user_requirements,
@@ -166,7 +185,7 @@ class GemmaClient:
         except Exception as e:
             logger.warning("AI provider extraction failed: %s", e)
             raise ModelClientError(
-                f"Failed to extract architecture via provider '{self.provider.name}': {e}",
+                f"Failed to extract architecture via provider '{target_provider.name}': {e}",
                 code="ERR_MODEL_EXTRACTION_FAILED",
             )
 

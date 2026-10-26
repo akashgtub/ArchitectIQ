@@ -9,27 +9,59 @@ and operational parameters.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import List
 from pydantic import BaseModel, Field
+
+# Automatically load root .env file if available
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).resolve().parent.parent / ".env"
+    if _env_path.exists():
+        load_dotenv(dotenv_path=_env_path)
+    else:
+        load_dotenv()
+except ImportError:
+    pass
 
 
 class Settings(BaseModel):
     # AI Provider & Model Configuration
-    # Options: 'auto', 'gemma', 'gemini', 'deterministic_fallback'
+    # Options: 'auto', 'huggingface', 'gemini', 'gemma', 'deterministic_fallback'
     ai_provider: str = Field(
         default_factory=lambda: os.getenv("AI_PROVIDER", "auto").lower()
     )
+    # Optional task-specific provider overrides
+    vision_ai_provider: str = Field(
+        default_factory=lambda: os.getenv("VISION_AI_PROVIDER", "gemini").lower()
+    )
+    text_ai_provider: str = Field(
+        default_factory=lambda: os.getenv("TEXT_AI_PROVIDER", os.getenv("AI_PROVIDER", "auto")).lower()
+    )
+
+    # Google Gemini Configuration (Multimodal Vision + Reasoning)
     gemini_api_key: str = Field(
         default_factory=lambda: os.getenv("GEMINI_API_KEY", "")
     )
     gemini_model_id: str = Field(
-        default_factory=lambda: os.getenv("GEMINI_MODEL_ID", "gemini-2.0-flash")
+        default_factory=lambda: os.getenv("GEMINI_MODEL_ID", "gemini-flash-latest")
     )
     gemini_base_url: str = Field(
         default_factory=lambda: os.getenv("GEMINI_BASE_URL", "")
     )
 
-    # Gemma Model Configuration
+    # Hugging Face Inference Providers Configuration (OpenAI-compatible /v1/chat/completions)
+    hf_token: str = Field(
+        default_factory=lambda: os.getenv("HF_TOKEN", "")
+    )
+    hf_model: str = Field(
+        default_factory=lambda: os.getenv("HF_MODEL", "google/gemma-2-27b-it")
+    )
+    hf_base_url: str = Field(
+        default_factory=lambda: os.getenv("HF_BASE_URL", "https://router.huggingface.co/v1").rstrip("/")
+    )
+
+    # Google Gemma Model Configuration (Direct Google API / Custom Host)
     # Supports Google AI Studio, Vertex AI, or OpenAI-compatible inference servers (vLLM, Ollama, Groq)
     gemma_api_key: str = Field(
         default_factory=lambda: os.getenv("GEMMA_API_KEY", os.getenv("GEMINI_API_KEY", ""))

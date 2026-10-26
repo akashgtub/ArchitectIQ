@@ -130,6 +130,21 @@ class BaseAIProvider(ABC):
         pass
 
 
+def _sanitize_text(text: str) -> str:
+    """Redact API keys, bearer tokens, and secrets from logs and error messages."""
+    if not text:
+        return ""
+    # Redact query param key=...
+    text = re.sub(r'(?:key|token|api_key|password)=[^&\s"\']+', r'key=[REDACTED]', text, flags=re.IGNORECASE)
+    # Redact Bearer tokens
+    text = re.sub(r'(Bearer\s+)[A-Za-z0-9_\-\.]{15,}', r'\1[REDACTED]', text, flags=re.IGNORECASE)
+    # Redact Hugging Face tokens hf_...
+    text = re.sub(r'hf_[A-Za-z0-9]{20,}', r'hf_[REDACTED]', text)
+    # Redact Google AI Studio / Gemini keys
+    text = re.sub(r'AIza[A-Za-z0-9_\-]{30,}', r'AIza[REDACTED]', text)
+    return text
+
+
 def _clean_json_text(text: str) -> str:
     """Strip markdown code block fences and whitespace from raw model response."""
     cleaned = text.strip()
@@ -137,6 +152,7 @@ def _clean_json_text(text: str) -> str:
     if match:
         cleaned = match.group(1).strip()
     return cleaned
+
 
 
 EXTRACTION_SYSTEM_INSTRUCTION = """You are an expert distributed systems architect analyzing an architecture diagram.
@@ -231,37 +247,68 @@ class GeminiProvider(BaseAIProvider):
         if system_instruction:
             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
-        async with httpx.AsyncClient(timeout=float(settings.per_call_timeout_seconds)) as client:
-            resp = await client.post(url, json=payload)
+        timeout_sec = float(settings.per_call_timeout_seconds)
+        try:
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                resp = await client.post(url, json=payload)
+                elapsed_ms = (time.time() - start_time) * 1000.0
+
+                if resp.status_code != 200:
+                    sanitized_err = _sanitize_text(resp.text[:300])
+                    if resp.status_code in (401, 403):
+                        code = "ERR_GEMINI_AUTH"
+                        msg = f"Google Gemini authentication failed (HTTP {resp.status_code}). Verify GEMINI_API_KEY."
+                    elif resp.status_code == 404:
+                        code = "ERR_GEMINI_MODEL_NOT_FOUND"
+                        msg = f"Google Gemini model '{self._model_id}' was not found or is deprecated: {sanitized_err}"
+                    elif resp.status_code == 429:
+                        code = "ERR_GEMINI_QUOTA"
+                        msg = f"Google Gemini API quota or rate limit exceeded: {sanitized_err}"
+                    elif resp.status_code == 503:
+                        code = "ERR_GEMINI_UNAVAILABLE"
+                        msg = f"Google Gemini model temporarily unavailable or experiencing high demand: {sanitized_err}"
+                    else:
+                        code = "ERR_GEMINI_API_HTTP"
+                        msg = f"Gemini API returned HTTP {resp.status_code}: {sanitized_err}"
+
+                    logger.error(
+                        "Gemini invocation FAILED [request_id=%s, status=%d, elapsed=%.1fms]: %s",
+                        req_id,
+                        resp.status_code,
+                        elapsed_ms,
+                        msg,
+                    )
+                    raise ModelClientError(msg, code=code)
+
+                data = resp.json()
+                try:
+                    candidate_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    logger.info(
+                        "Gemini model invocation COMPLETED [request_id=%s, elapsed=%.1fms]",
+                        req_id,
+                        elapsed_ms,
+                    )
+                    return candidate_text
+                except (KeyError, IndexError) as err:
+                    raise ModelClientError(
+                        f"Malformed Gemini API response: {err}",
+                        code="ERR_GEMINI_MALFORMED",
+                    )
+        except httpx.TimeoutException:
             elapsed_ms = (time.time() - start_time) * 1000.0
-
-            if resp.status_code != 200:
-                logger.error(
-                    "Gemini invocation FAILED [request_id=%s, status=%d, elapsed=%.1fms]: %s",
-                    req_id,
-                    resp.status_code,
-                    elapsed_ms,
-                    resp.text[:300],
-                )
-                raise ModelClientError(
-                    f"Gemini API returned HTTP {resp.status_code}: {resp.text}",
-                    code="ERR_GEMINI_API_HTTP",
-                )
-
-            data = resp.json()
-            try:
-                candidate_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                logger.info(
-                    "Gemini model invocation COMPLETED [request_id=%s, elapsed=%.1fms]",
-                    req_id,
-                    elapsed_ms,
-                )
-                return candidate_text
-            except (KeyError, IndexError) as err:
-                raise ModelClientError(
-                    f"Malformed Gemini API response: {err}",
-                    code="ERR_GEMINI_MALFORMED",
-                )
+            logger.error("Gemini invocation TIMED OUT [request_id=%s, elapsed=%.1fms]", req_id, elapsed_ms)
+            raise ModelClientError(
+                f"Google Gemini request timed out after {timeout_sec}s for model '{self._model_id}'",
+                code="ERR_GEMINI_TIMEOUT",
+            )
+        except httpx.RequestError as exc:
+            elapsed_ms = (time.time() - start_time) * 1000.0
+            sanitized_exc = _sanitize_text(str(exc))
+            logger.error("Gemini connection FAILED [request_id=%s, elapsed=%.1fms]: %s", req_id, elapsed_ms, sanitized_exc)
+            raise ModelClientError(
+                f"Google Gemini network error: {sanitized_exc}",
+                code="ERR_GEMINI_CONNECTION",
+            )
 
     async def extract_architecture(
         self,
@@ -528,6 +575,227 @@ class GemmaProvider(BaseAIProvider):
         return await self._call_inference(prompt=prompt, request_id=request_id)
 
 
+class HuggingFaceProvider(BaseAIProvider):
+    """
+    Hugging Face Inference Providers implementation.
+    Uses the OpenAI-compatible chat completions endpoint:
+      https://router.huggingface.co/v1/chat/completions
+    Authenticated with HF_TOKEN.
+    
+    Provides structured architecture extraction (from text), root-cause explanations,
+    optimization trade-off analysis, and chaos testing resilience analysis.
+    Note: Standard chat models on Hugging Face router are text-to-text.
+    Rejects raw image bytes and requires image parsing to be routed to a vision-capable provider.
+    """
+
+    def __init__(
+        self,
+        api_token: str = "",
+        model_id: str = "google/gemma-2-27b-it",
+        base_url: str = "https://router.huggingface.co/v1",
+    ):
+        self.api_token = api_token or settings.hf_token
+        self._model_id = model_id or settings.hf_model
+        self._base_url = (base_url or settings.hf_base_url).rstrip("/")
+
+    @property
+    def name(self) -> str:
+        return "huggingface"
+
+    @property
+    def model_name(self) -> str:
+        return self._model_id
+
+    @property
+    def supports_vision(self) -> bool:
+        return False
+
+    async def _call_chat_completions(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> str:
+        req_id = request_id or str(uuid.uuid4())
+        start_time = time.time()
+        logger.info(
+            "Hugging Face invocation START [request_id=%s, model=%s]",
+            req_id,
+            self._model_id,
+        )
+
+        if not self.api_token:
+            raise ModelClientError(
+                "Hugging Face token not configured. Please set HF_TOKEN in your environment or .env file.",
+                code="ERR_HF_NO_TOKEN",
+            )
+
+        url = f"{self._base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "application/json",
+        }
+
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": self._model_id,
+            "messages": messages,
+            "temperature": 0.1,
+        }
+
+        timeout_sec = float(settings.per_call_timeout_seconds)
+        try:
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                elapsed_ms = (time.time() - start_time) * 1000.0
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    logger.info(
+                        "Hugging Face invocation COMPLETED [request_id=%s, model=%s, elapsed=%.1fms]",
+                        req_id,
+                        self._model_id,
+                        elapsed_ms,
+                    )
+                    return content
+
+                sanitized_text = _sanitize_text(resp.text[:400])
+                if resp.status_code in (401, 403):
+                    msg = f"Hugging Face authentication failed (HTTP {resp.status_code}). Verify your HF_TOKEN has Inference permissions."
+                    code = "ERR_HF_AUTH"
+                elif resp.status_code == 402:
+                    msg = (
+                        f"Hugging Face Inference Providers requires prepaid credits or PRO subscription: {sanitized_text}"
+                    )
+                    code = "ERR_HF_NO_CREDITS"
+                elif resp.status_code == 400:
+                    msg = f"Hugging Face model '{self._model_id}' is not supported or invalid request: {sanitized_text}"
+                    code = "ERR_HF_MODEL_NOT_SUPPORTED"
+                elif resp.status_code == 429:
+                    msg = f"Hugging Face rate limit exceeded: {sanitized_text}"
+                    code = "ERR_HF_RATE_LIMIT"
+                elif resp.status_code == 503:
+                    msg = f"Hugging Face inference service unavailable (model may be loading): {sanitized_text}"
+                    code = "ERR_HF_UNAVAILABLE"
+                else:
+                    msg = f"Hugging Face router returned HTTP {resp.status_code}: {sanitized_text}"
+                    code = "ERR_HF_HTTP_ERROR"
+
+                logger.error(
+                    "Hugging Face invocation FAILED [request_id=%s, status=%d, elapsed=%.1fms]: %s",
+                    req_id,
+                    resp.status_code,
+                    elapsed_ms,
+                    msg,
+                )
+                raise ModelClientError(msg, code=code)
+
+        except httpx.TimeoutException as exc:
+            elapsed_ms = (time.time() - start_time) * 1000.0
+            logger.error("Hugging Face request timed out after %.1fms: %s", elapsed_ms, exc)
+            raise ModelClientError(
+                f"Hugging Face request timed out after {timeout_sec}s for model '{self._model_id}'",
+                code="ERR_HF_TIMEOUT",
+            )
+        except httpx.RequestError as exc:
+            elapsed_ms = (time.time() - start_time) * 1000.0
+            sanitized_err = _sanitize_text(str(exc))
+            logger.error("Hugging Face network error after %.1fms: %s", elapsed_ms, sanitized_err)
+            raise ModelClientError(
+                f"Hugging Face connection error: {sanitized_err}",
+                code="ERR_HF_CONNECTION",
+            )
+
+    async def extract_architecture(
+        self,
+        image_bytes: Optional[bytes] = None,
+        image_format: str = "PNG",
+        user_requirements: Optional[str] = None,
+        user_workload: Optional[Dict[str, Any]] = None,
+        user_constraints: Optional[Dict[str, Any]] = None,
+        request_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if image_bytes:
+            raise ModelClientError(
+                f"Hugging Face model '{self._model_id}' is text-only and does not support direct image inputs. "
+                "Route diagram image analysis to a vision-capable provider (e.g. Gemini).",
+                code="ERR_UNSUPPORTED_VISION",
+            )
+
+        prompt = (
+            "You are an expert distributed systems architect.\n"
+            "Analyze the following system specification and synthesize a validated architecture JSON.\n"
+            f"User Requirements: {user_requirements or 'Standard web application architecture.'}\n"
+            f"Workload Profile: {json.dumps(user_workload or {'requests_per_second': 500, 'read_ratio': 0.8, 'write_ratio': 0.2})}\n"
+            f"Constraints: {json.dumps(user_constraints or {'max_p95_latency_ms': 200})}\n"
+            "\n" + EXTRACTION_SYSTEM_INSTRUCTION
+        )
+        raw = await self._call_chat_completions(prompt=prompt, request_id=request_id)
+        cleaned = _clean_json_text(raw)
+        try:
+            return json.loads(cleaned)
+        except Exception as e:
+            raise ModelClientError(f"Failed to parse Hugging Face structured JSON: {e}", code="ERR_INVALID_MODEL_JSON")
+
+    async def explain_root_cause(
+        self,
+        architecture: Architecture,
+        baseline: BaselineSimulationResponse,
+        hypotheses: List[RootCauseHypothesis],
+        experiments: List[DiagnosticExperimentResponse],
+        request_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        prompt = (
+            f"Analyze discrete-event simulation outputs for architecture '{architecture.architecture_id}'.\n"
+            f"Baseline p95 Latency: {baseline.metrics.get('p95_latency_ms')}ms\n"
+            f"Baseline Throughput: {baseline.metrics.get('throughput_rps')} RPS\n"
+            f"Component breakdown: {json.dumps([m.model_dump() for m in baseline.component_metrics], indent=2)}\n"
+            f"Diagnostic experiments: {json.dumps([e.model_dump() for e in experiments], indent=2)}\n"
+            "Provide evidence-based reasoning citing exact component IDs and percentage diffs."
+        )
+        text = await self._call_chat_completions(prompt=prompt, request_id=request_id)
+        return {"explanation": text, "model": self._model_id}
+
+    async def explain_optimization(
+        self,
+        baseline_metrics: PerformanceMetrics,
+        candidates: List[CandidateArchitecture],
+        recommended: Optional[CandidateArchitecture],
+        objective: str,
+        request_id: Optional[str] = None,
+    ) -> str:
+        prompt = (
+            f"Analyze architecture optimization results under objective '{objective}'.\n"
+            f"Baseline: p95={baseline_metrics.p95_latency_ms:.1f}ms, RPS={baseline_metrics.throughput_rps:.1f}, Cost=${baseline_metrics.total_monthly_cost_usd:.2f}/mo.\n"
+            f"Top Candidate: {recommended.candidate_id if recommended else 'None'} ({recommended.description if recommended else ''}).\n"
+            "Explain why this configuration represents the optimal Pareto trade-off."
+        )
+        return await self._call_chat_completions(prompt=prompt, request_id=request_id)
+
+    async def explain_chaos(
+        self,
+        scenario: FailureScenario,
+        baseline_metrics: PerformanceMetrics,
+        failure_metrics: PerformanceMetrics,
+        affected_components: List[str],
+        recovered: bool,
+        request_id: Optional[str] = None,
+    ) -> str:
+        delta_p95 = failure_metrics.p95_latency_ms - baseline_metrics.p95_latency_ms
+        prompt = (
+            f"Analyze resilience simulation for failure scenario '{scenario.name}'.\n"
+            f"Target: {affected_components}. Latency delta: +{delta_p95:.1f}ms. Error rate: {failure_metrics.error_rate*100:.1f}%.\n"
+            f"System recovered: {recovered}.\n"
+            "Synthesize actionable engineering recommendations."
+        )
+        return await self._call_chat_completions(prompt=prompt, request_id=request_id)
+
+
 class DeterministicFallbackProvider(BaseAIProvider):
     """
     Deterministic rule-based fallback provider.
@@ -717,16 +985,53 @@ class DeterministicFallbackProvider(BaseAIProvider):
         )
 
 
-def get_ai_provider(provider_type: Optional[str] = None) -> BaseAIProvider:
+def get_ai_provider(provider_type: Optional[str] = None, task: str = "text") -> BaseAIProvider:
     """
     Factory function for obtaining the configured AI provider.
-    Inspects settings:
-    - If provider_type is explicitly specified, initializes that provider.
-    - If 'gemma': uses GemmaProvider with GEMMA_API_KEY / GEMMA_BASE_URL.
-    - If 'gemini': uses GeminiProvider with GEMINI_API_KEY.
-    - If 'auto': selects Gemma if configured, then Gemini, then DeterministicFallbackProvider.
+
+    Parameters:
+    - provider_type: Explicit provider override ('huggingface', 'gemini', 'gemma', 'deterministic_fallback').
+    - task: 'text' or 'vision'.
+      If task == 'vision', text-only providers (e.g. huggingface, gemma) are NOT selected;
+      instead, a vision-capable provider (GeminiProvider) or DeterministicFallbackProvider is returned.
     """
-    choice = (provider_type or settings.ai_provider).lower()
+    # Vision Task Routing: Only vision-capable providers or explicit fallback
+    if task == "vision":
+        choice = (provider_type or settings.vision_ai_provider).lower()
+        if choice in ("deterministic_fallback", "mock", "fallback"):
+            return DeterministicFallbackProvider()
+
+        if settings.gemini_api_key:
+            return GeminiProvider(
+                api_key=settings.gemini_api_key,
+                model_id=settings.gemini_model_id,
+                base_url=settings.gemini_base_url,
+            )
+
+        if settings.allow_ai_fallback:
+            logger.warning(
+                "No vision-capable AI provider credentials found. Using DeterministicFallbackProvider for diagram extraction."
+            )
+            return DeterministicFallbackProvider()
+        raise ModelClientError(
+            "No vision-capable AI credentials configured (GEMINI_API_KEY required for image parsing).",
+            code="ERR_NO_VISION_PROVIDER",
+        )
+
+    # Text Task Routing
+    choice = (provider_type or settings.text_ai_provider or settings.ai_provider).lower()
+
+    if choice in ("huggingface", "hf"):
+        if not settings.hf_token:
+            if settings.allow_ai_fallback:
+                logger.warning("HF_TOKEN not configured. Using DeterministicFallbackProvider.")
+                return DeterministicFallbackProvider()
+            raise ModelClientError("HF_TOKEN is not configured for Hugging Face provider.", code="ERR_NO_HF_TOKEN")
+        return HuggingFaceProvider(
+            api_token=settings.hf_token,
+            model_id=settings.hf_model,
+            base_url=settings.hf_base_url,
+        )
 
     if choice == "gemini":
         if not settings.gemini_api_key:
@@ -755,7 +1060,14 @@ def get_ai_provider(provider_type: Optional[str] = None) -> BaseAIProvider:
     if choice in ("deterministic_fallback", "mock", "fallback"):
         return DeterministicFallbackProvider()
 
-    # 'auto' mode
+    # 'auto' mode: Hugging Face (if HF_TOKEN) -> Gemma -> Gemini -> Fallback
+    if settings.hf_token:
+        return HuggingFaceProvider(
+            api_token=settings.hf_token,
+            model_id=settings.hf_model,
+            base_url=settings.hf_base_url,
+        )
+
     if settings.gemma_base_url or (settings.gemma_api_key and "gemma" in settings.gemma_model_id):
         return GemmaProvider(
             api_key=settings.gemma_api_key,
