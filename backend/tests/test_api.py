@@ -360,3 +360,61 @@ async def test_api_simulate_baseline_and_diagnostic():
         assert parsed_diag.source == "member2_simulator"
         assert parsed_diag.is_mock is False
         assert len(parsed_diag.diff_from_baseline) > 0
+
+
+@pytest.mark.asyncio
+async def test_health_check_endpoints():
+    """Verify health-check endpoints return 200 OK without requiring external AI services."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Root health check (Render health check path)
+        resp1 = await ac.get("/health")
+        assert resp1.status_code == 200
+        data1 = resp1.json()
+        assert data1["status"] == "healthy"
+        assert "service" in data1
+        assert "schema_version" in data1
+
+        # Versioned health check
+        resp2 = await ac.get("/api/v1/health")
+        assert resp2.status_code == 200
+        data2 = resp2.json()
+        assert data2["status"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_frontend_serving_and_route_precedence():
+    """Verify built frontend serving, asset delivery, and API route precedence."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # GET / must serve frontend index.html
+        root_resp = await ac.get("/")
+        assert root_resp.status_code == 200
+        assert "text/html" in root_resp.headers.get("content-type", "")
+        assert "ArchitectIQ" in root_resp.text
+
+        # API routes must take precedence over frontend fallback
+        api_404 = await ac.get("/api/v1/nonexistent_route")
+        assert api_404.status_code == 404
+        assert api_404.json().get("error_code") == "ERR_NOT_FOUND"
+
+        # Client-side fallback should serve index.html for non-API routes
+        spa_resp = await ac.get("/dashboard/view")
+        assert spa_resp.status_code == 200
+        assert "text/html" in spa_resp.headers.get("content-type", "")
+
+
+@pytest.mark.asyncio
+async def test_missing_frontend_artifacts_error(monkeypatch):
+    """Verify clear HTTP 503 error instead of blank page when build artifacts are missing."""
+    import backend.main as main_mod
+
+    # Temporarily point dist_index to a nonexistent path
+    nonexistent = Path(__file__).resolve().parent / "nonexistent_index.html"
+    monkeypatch.setattr(main_mod, "dist_index", nonexistent)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        resp = await ac.get("/")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data.get("error_code") == "ERR_FRONTEND_NOT_BUILT"
+        assert "Frontend production build artifacts were not found" in data.get("message", "")
+

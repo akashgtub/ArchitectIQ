@@ -60,27 +60,80 @@ app.add_middleware(
 # Include API router
 app.include_router(api_v1_router)
 
-# Mount frontend files if available
+# Mount frontend files and assets
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exceptions import HTTPException as FastAPIHTTPException
 
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-frontend_src = Path(__file__).resolve().parent.parent / "frontend"
+dist_index = frontend_dist / "index.html"
+dist_assets = frontend_dist / "assets"
 
-if frontend_dist.is_dir() and (frontend_dist / "index.html").is_file():
-    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="frontend_assets")
-    @app.get("/", tags=["Frontend"])
-    async def serve_frontend():
-        return FileResponse(str(frontend_dist / "index.html"))
-elif frontend_src.is_dir() and (frontend_src / "index.html").is_file():
-    app.mount("/src", StaticFiles(directory=str(frontend_src / "src")), name="frontend_src")
-    @app.get("/", tags=["Frontend"])
-    async def serve_frontend():
-        return FileResponse(str(frontend_src / "index.html"))
+if dist_assets.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(dist_assets)), name="frontend_assets")
+
+
+def _get_frontend_response():
+    if dist_index.is_file():
+        return FileResponse(str(dist_index))
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "error_code": "ERR_FRONTEND_NOT_BUILT",
+            "message": (
+                "Frontend production build artifacts were not found in 'frontend/dist'. "
+                "Ensure 'npm run build' was executed during the deployment build process."
+            ),
+        },
+    )
+
+
+@app.get("/", tags=["Frontend"])
+async def serve_frontend_root():
+    return _get_frontend_response()
+
+
+@app.get("/{full_path:path}", tags=["Frontend"], include_in_schema=False)
+async def serve_frontend_fallback(full_path: str):
+    # Guard API, health, docs, and schema endpoints against falling back to frontend
+    if (
+        full_path.startswith("api/")
+        or full_path == "api"
+        or full_path.startswith("health")
+        or full_path.startswith("docs")
+        or full_path.startswith("redoc")
+        or full_path == "openapi.json"
+    ):
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"error_code": "ERR_NOT_FOUND", "message": f"Resource '/{full_path}' not found."},
+        )
+
+    # Check for root static assets inside dist (e.g., favicon, icons, etc.)
+    static_file = frontend_dist / full_path
+    if static_file.is_file():
+        return FileResponse(str(static_file))
+
+    # Also check dist/assets in case asset is requested without /assets prefix
+    asset_file = dist_assets / full_path
+    if asset_file.is_file():
+        return FileResponse(str(asset_file))
+
+    # SPA routing fallback
+    return _get_frontend_response()
+
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, (FastAPIHTTPException, StarletteHTTPException)):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.detail if isinstance(exc.detail, (dict, list)) else {"detail": exc.detail},
+            headers=getattr(exc, "headers", None),
+        )
     logger.error("Unhandled exception at %s: %s", request.url.path, exc, exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -92,5 +145,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=False)
+

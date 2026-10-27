@@ -57,7 +57,9 @@ Desktop.ini
 
 # Frontend dependencies and builds
 node_modules/
+frontend/dist/
 .npm/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
