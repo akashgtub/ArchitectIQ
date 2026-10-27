@@ -106,6 +106,21 @@ class Component(BaseModel):
         description="Component-specific attributes (e.g. instances, cpu_cores, ram_gb, db_engine)"
     )
 
+    @field_validator("type", mode="before")
+    @classmethod
+    def normalize_component_type(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v_lower = v.lower().strip()
+            alias_map = {
+                "api_gateway": ComponentType.GATEWAY,
+                "service": ComponentType.MICROSERVICE,
+                "queue": ComponentType.MESSAGE_QUEUE,
+                "db": ComponentType.DATABASE,
+            }
+            if v_lower in alias_map:
+                return alias_map[v_lower]
+        return v
+
     @field_validator("id")
     @classmethod
     def validate_id_not_empty(cls, v: str) -> str:

@@ -28,12 +28,17 @@ logger = logging.getLogger("archpilot.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting ArchPilot AI (Member 1 Engine)...")
+    logger.info("Starting ArchitectIQ Autonomous Engine...")
+    try:
+        from backend.persistence.database import init_db
+        init_db()
+    except Exception as err:
+        logger.warning("Could not initialize SQLite persistence: %s", err)
     logger.info("Model Configured: %s", settings.gemini_model_id)
     logger.info("Simulator Base URL: %s (Mock Mode: %s)", settings.simulator_base_url or "None", settings.use_mock_simulator)
     logger.info("Shared Schema Version: %s", SCHEMA_VERSION)
     yield
-    logger.info("Shutting down ArchPilot AI (Member 1 Engine)...")
+    logger.info("Shutting down ArchitectIQ Autonomous Engine...")
 
 
 app = FastAPI(

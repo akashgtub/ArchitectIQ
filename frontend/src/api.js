@@ -184,6 +184,71 @@ export const api = {
       }),
     });
   },
+
+  /**
+   * Fetch predefined production architecture presets
+   */
+  async listPresets() {
+    return request('/api/v1/presets');
+  },
+
+  /**
+   * Fetch full preset definition by ID
+   */
+  async getPreset(presetId) {
+    return request(`/api/v1/presets/${encodeURIComponent(presetId)}`);
+  },
+
+  /**
+   * List saved architectures from persistent SQLite storage
+   */
+  async listSavedArchitectures(limit = 50) {
+    return request(`/api/v1/history/architectures?limit=${limit}`);
+  },
+
+  /**
+   * Save or update an architecture definition in persistent storage
+   */
+  async saveArchitecture({ id, name, description = '', data, schema_version = '1.0' }) {
+    return request('/api/v1/history/architectures', {
+      method: 'POST',
+      body: JSON.stringify({ id, name, description, data, schema_version }),
+    });
+  },
+
+  /**
+   * Fetch a specific saved architecture by ID
+   */
+  async getSavedArchitecture(archId) {
+    return request(`/api/v1/history/architectures/${encodeURIComponent(archId)}`);
+  },
+
+  /**
+   * Delete a saved architecture by ID
+   */
+  async deleteSavedArchitecture(archId) {
+    return request(`/api/v1/history/architectures/${encodeURIComponent(archId)}`, {
+      method: 'DELETE',
+    });
+  },
+
+  /**
+   * List simulation run history
+   */
+  async listSimulations(architectureId = null, runType = null, limit = 50) {
+    const params = new URLSearchParams();
+    if (architectureId) params.append('architecture_id', architectureId);
+    if (runType) params.append('run_type', runType);
+    params.append('limit', limit);
+    return request(`/api/v1/history/simulations?${params.toString()}`);
+  },
+
+  /**
+   * Get specific simulation run details
+   */
+  async getSimulation(runId) {
+    return request(`/api/v1/history/simulations/${encodeURIComponent(runId)}`);
+  },
 };
 
 export default api;

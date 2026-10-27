@@ -41,13 +41,19 @@ class Settings(BaseModel):
 
     # Google Gemini Configuration (Multimodal Vision + Reasoning)
     gemini_api_key: str = Field(
-        default_factory=lambda: os.getenv("GEMINI_API_KEY", "")
+        default_factory=lambda: os.getenv("GOOGLE_API_KEY", os.getenv("GEMINI_API_KEY", ""))
     )
     gemini_model_id: str = Field(
-        default_factory=lambda: os.getenv("GEMINI_MODEL_ID", "gemini-flash-latest")
+        default_factory=lambda: os.getenv("GOOGLE_MODEL", os.getenv("GEMINI_MODEL_ID", "gemini-flash-latest"))
     )
     gemini_base_url: str = Field(
         default_factory=lambda: os.getenv("GEMINI_BASE_URL", "")
+    )
+    database_url: str = Field(
+        default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./architectiq.db")
+    )
+    log_level: str = Field(
+        default_factory=lambda: os.getenv("LOG_LEVEL", "INFO")
     )
 
     # Hugging Face Inference Providers Configuration (OpenAI-compatible /v1/chat/completions)
@@ -107,8 +113,11 @@ class Settings(BaseModel):
     )
 
     # Image Validation Constraints
+    max_upload_size_mb: int = Field(
+        default_factory=lambda: int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
+    )
     max_image_size_bytes: int = Field(
-        default_factory=lambda: int(os.getenv("MAX_IMAGE_SIZE_BYTES", str(10 * 1024 * 1024)))  # 10 MB
+        default_factory=lambda: int(os.getenv("MAX_IMAGE_SIZE_BYTES", str(int(os.getenv("MAX_UPLOAD_SIZE_MB", "10")) * 1024 * 1024)))
     )
     max_image_dimension: int = Field(
         default_factory=lambda: int(os.getenv("MAX_IMAGE_DIMENSION", "4096"))
@@ -120,8 +129,14 @@ class Settings(BaseModel):
     environment: str = Field(
         default_factory=lambda: os.getenv("ENVIRONMENT", "development")
     )
+    frontend_origin: str = Field(
+        default_factory=lambda: os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+    )
     cors_origins: List[str] = Field(
-        default_factory=lambda: [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+        default_factory=lambda: list({
+            *[o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()],
+            os.getenv("FRONTEND_ORIGIN", "http://localhost:5173").strip()
+        })
     )
 
 

@@ -117,11 +117,13 @@
             <div class="card">
               <div class="card-title">
                 <span>Architecture Input</span>
-                <select id="preset-selector" class="form-select" style="width: auto; padding: 0.35rem 0.75rem; font-size: 0.82rem;">
-                  <option value="">-- Or Load a Sample Preset --</option>
-                  <option value="ecommerce">Sample: E-Commerce Microservices</option>
-                  <option value="payments">Sample: FinTech Payments Gateway</option>
-                </select>
+                <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+                  <select id="preset-selector" class="form-select" style="width: auto; padding: 0.35rem 0.65rem; font-size: 0.82rem;">
+                    <option value="">-- Load System Preset --</option>
+                  </select>
+                  <button id="btn-save-arch" class="btn btn-secondary" style="padding: 0.35rem 0.65rem; font-size: 0.82rem;" title="Save current architecture to SQLite">Save</button>
+                  <button id="btn-load-history" class="btn btn-secondary" style="padding: 0.35rem 0.65rem; font-size: 0.82rem;" title="View history of saved architectures">History</button>
+                </div>
               </div>
 
               <div class="dropzone" id="dropzone">
@@ -191,6 +193,22 @@
 
           <div class="card" style="margin-bottom: 1.5rem;">
             <div class="card-title">
+              <span>Interactive Topology Graph (Cytoscape.js)</span>
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <button id="btn-fit-cy" class="btn btn-secondary" style="padding: 0.25rem 0.65rem; font-size: 0.78rem;">Fit View</button>
+                <button id="btn-relayout-cy" class="btn btn-secondary" style="padding: 0.25rem 0.65rem; font-size: 0.78rem;">Re-Layout</button>
+              </div>
+            </div>
+            <div id="cy-canvas" style="width: 100%; height: 360px; background: #070b14; border-radius: var(--radius-sm); border: 1px solid var(--border-color); position: relative;">
+              <div id="cy-placeholder" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); font-size: 0.9rem;">
+                No architecture loaded. Upload a diagram or choose a preset in Stage 1.
+              </div>
+            </div>
+            <div id="cy-selected-info" style="margin-top: 0.85rem; font-size: 0.85rem; color: var(--text-secondary); display: none;"></div>
+          </div>
+
+          <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-title">
               <span>Active Components</span>
               <span id="topology-provenance-badge" class="badge-tag" style="display: none;"></span>
             </div>
@@ -230,6 +248,25 @@
             <div class="stat-card">
               <div class="stat-header">Infrastructure Cost</div>
               <div class="stat-value" id="sim-cost">-- /hr</div>
+            </div>
+          </div>
+
+          <div class="grid-2" style="margin-bottom: 1.5rem;">
+            <div class="card">
+              <div class="card-title">
+                <span>Latency Distribution (p50, p95, p99, avg)</span>
+              </div>
+              <div style="position: relative; height: 240px;">
+                <canvas id="chart-latency-percentiles"></canvas>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-title">
+                <span>Component Load & Queue Utilization (%)</span>
+              </div>
+              <div style="position: relative; height: 240px;">
+                <canvas id="chart-utilization"></canvas>
+              </div>
             </div>
           </div>
 
@@ -319,6 +356,16 @@
 
           <div id="optimization-recommended"></div>
 
+          <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-title">
+              <span>Pareto Trade-Off Frontier (Monthly Cost vs. p95 Latency)</span>
+              <span class="badge-tag">Multi-Objective Optimization</span>
+            </div>
+            <div style="position: relative; height: 260px;">
+              <canvas id="chart-pareto"></canvas>
+            </div>
+          </div>
+
           <div class="card">
             <div class="card-title">
               <span>Ranked Candidate Architectures</span>
@@ -379,10 +426,33 @@
             <div id="chaos-alert" style="display: none; margin-top: 1rem;"></div>
           </div>
 
+          <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-title">
+              <span>Resilience Impact & Recovery Analysis</span>
+              <span class="badge-tag">Baseline vs. Failure Delta</span>
+            </div>
+            <div style="position: relative; height: 260px;">
+              <canvas id="chart-chaos-comparison"></canvas>
+            </div>
+          </div>
+
           <div id="chaos-results-container"></div>
         </section>
 
       </main>
+    </div>
+  </div>
+
+  <!-- Persistent Architecture History Modal -->
+  <div id="modal-history" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+    <div class="card" style="width: 90%; max-width: 650px; max-height: 80vh; display: flex; flex-direction: column;">
+      <div class="card-title">
+        <span>Saved Architectures (SQLite Persistence)</span>
+        <button id="btn-close-modal" class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">&times; Close</button>
+      </div>
+      <div id="history-modal-body" style="overflow-y: auto; flex: 1; padding: 0.5rem 0;">
+        <p style="color: var(--text-secondary); font-size: 0.88rem;">Loading saved architectures...</p>
+      </div>
     </div>
   </div>
 

@@ -5,6 +5,15 @@
  */
 
 import { api } from './api.js';
+import Chart from 'chart.js/auto';
+import cytoscape from 'cytoscape';
+
+// Graph and Chart instances
+let cyInstance = null;
+let chartLatency = null;
+let chartUtilization = null;
+let chartPareto = null;
+let chartChaos = null;
 
 // Predefined Real-World Architecture Presets (Explicitly labelled demonstration samples)
 const PRESET_ARCHITECTURES = {
@@ -173,6 +182,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initPresetSelector();
   initUploadDropzone();
   initActionButtons();
+  initHistoryModal();
+  fetchDynamicPresets();
   checkBackendHealth();
   updateWorkflowAvailability();
 });
@@ -371,40 +382,184 @@ function updateWorkflowAvailability() {
 // Presets & Form Handling
 // ============================================================================
 
-function initPresetSelector() {
+async function fetchDynamicPresets() {
   const select = document.getElementById('preset-selector');
   if (!select) return;
+  try {
+    const data = await api.listPresets();
+    if (data && data.presets && data.presets.length > 0) {
+      select.innerHTML = '<option value="">-- Load System Preset --</option>';
+      data.presets.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.name} (${p.component_count} comps)`;
+        select.appendChild(opt);
+      });
+    }
+  } catch (err) {
+    console.warn('API presets fetch skipped, using local fallback:', err);
+  }
+}
 
-  select.addEventListener('change', (e) => {
-    const presetKey = e.target.value;
-    if (!presetKey) return;
+async function handlePresetSelected(presetKey) {
+  if (!presetKey) return;
+  invalidateArchitectureResults('System preset loaded. Previous simulation results cleared.');
+  state.selectedFile = null;
+  const dropzoneText = document.getElementById('dropzone-filename');
+  if (dropzoneText) dropzoneText.textContent = 'Drop architecture diagram here or click to browse';
 
-    if (PRESET_ARCHITECTURES[presetKey]) {
-      // Invalidate any previously loaded results
-      invalidateArchitectureResults('Sample preset loaded. Previous simulation results cleared.');
-
-      // Clear any pending file selection
-      state.selectedFile = null;
-      const dropzoneText = document.getElementById('dropzone-filename');
-      if (dropzoneText) dropzoneText.textContent = 'Drop architecture diagram here or click to browse';
-
-      // Load preset explicitly as demonstration architecture
-      state.currentArchitecture = normalizeArchitectureForSimulation(JSON.parse(JSON.stringify(PRESET_ARCHITECTURES[presetKey])));
+  try {
+    const presetData = await api.getPreset(presetKey);
+    if (presetData && presetData.architecture) {
+      state.currentArchitecture = normalizeArchitectureForSimulation(presetData.architecture);
       state.architectureSource = 'sample_preset';
-      state.architectureName = PRESET_ARCHITECTURES[presetKey].name;
+      state.architectureName = presetData.name;
       state.analysisProvenance = {
-        provider: 'sample_preset',
-        model_id: 'preset_data',
-        is_mock: true,
+        provider: 'backend_preset',
+        model_id: 'canonical_catalog',
+        is_mock: false,
         fallback_used: false,
       };
       state.lifecycleState = 'READY';
-
       populateFormFromArchitecture(state.currentArchitecture);
       updateWorkflowAvailability();
-      showAlert('upload-alert', `Loaded sample preset: ${state.architectureName} [Demonstration Input]. Run Baseline Simulation in Stage 3 to model performance.`, 'info');
+      showAlert('upload-alert', `Loaded preset: ${state.architectureName}. Run Baseline Simulation in Stage 3 to evaluate performance.`, 'info');
+      return;
     }
+  } catch (err) {
+    console.warn('Backend preset fetch failed, checking local dictionary:', err);
+  }
+
+  if (PRESET_ARCHITECTURES[presetKey]) {
+    state.currentArchitecture = normalizeArchitectureForSimulation(JSON.parse(JSON.stringify(PRESET_ARCHITECTURES[presetKey])));
+    state.architectureSource = 'sample_preset';
+    state.architectureName = PRESET_ARCHITECTURES[presetKey].name;
+    state.analysisProvenance = {
+      provider: 'sample_preset',
+      model_id: 'preset_data',
+      is_mock: true,
+      fallback_used: false,
+    };
+    state.lifecycleState = 'READY';
+    populateFormFromArchitecture(state.currentArchitecture);
+    updateWorkflowAvailability();
+    showAlert('upload-alert', `Loaded sample preset: ${state.architectureName}.`, 'info');
+  }
+}
+
+function initPresetSelector() {
+  const select = document.getElementById('preset-selector');
+  if (!select) return;
+  select.addEventListener('change', (e) => {
+    handlePresetSelected(e.target.value);
   });
+}
+
+function initHistoryModal() {
+  const btnSave = document.getElementById('btn-save-arch');
+  const btnHistory = document.getElementById('btn-load-history');
+  const modal = document.getElementById('modal-history');
+  const btnClose = document.getElementById('btn-close-modal');
+  const modalBody = document.getElementById('history-modal-body');
+
+  if (btnClose && modal) {
+    btnClose.onclick = () => { modal.style.display = 'none'; };
+  }
+  if (modal) {
+    modal.onclick = (e) => {
+      if (e.target === modal) modal.style.display = 'none';
+    };
+  }
+
+  if (btnSave) {
+    btnSave.onclick = async () => {
+      if (!state.currentArchitecture) {
+        showAlert('upload-alert', 'No architecture loaded to save. Load a preset or analyze a diagram first.', 'warning');
+        return;
+      }
+      try {
+        const archId = state.currentArchitecture.architecture_id || `arch-${Date.now()}`;
+        const name = state.architectureName || `Architecture ${archId}`;
+        await api.saveArchitecture({
+          id: archId,
+          name: name,
+          description: `Saved from ArchitectIQ console`,
+          data: state.currentArchitecture,
+          schema_version: '1.0',
+        });
+        showAlert('upload-alert', `Successfully saved architecture "${name}" (${archId}) to persistent SQLite database.`, 'success');
+      } catch (err) {
+        showAlert('upload-alert', `Failed to save architecture: ${err.message}`, 'danger');
+      }
+    };
+  }
+
+  if (btnHistory && modal && modalBody) {
+    btnHistory.onclick = async () => {
+      modal.style.display = 'flex';
+      modalBody.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.88rem;">Loading saved architectures from database...</p>';
+      try {
+        const res = await api.listSavedArchitectures();
+        const archs = res?.architectures || [];
+        if (archs.length === 0) {
+          modalBody.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.88rem;">No saved architectures found in database. Click "Save" after loading an architecture to persist it.</p>';
+          return;
+        }
+
+        modalBody.innerHTML = archs.map(a => `
+          <div class="card" style="padding: 0.85rem; margin-bottom: 0.65rem; display: flex; justify-content: space-between; align-items: center; background: #070b14;">
+            <div>
+              <strong style="color: var(--color-deep); font-size: 0.95rem;">${a.name}</strong>
+              <div style="font-size: 0.78rem; color: var(--text-secondary);">ID: <code>${a.id}</code> &bull; Saved: ${new Date(a.updated_at).toLocaleString()}</div>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-primary btn-load-arch" data-id="${a.id}" style="padding: 0.3rem 0.65rem; font-size: 0.78rem;">Load</button>
+              <button class="btn btn-danger btn-del-arch" data-id="${a.id}" style="padding: 0.3rem 0.65rem; font-size: 0.78rem;">&times;</button>
+            </div>
+          </div>
+        `).join('');
+
+        modalBody.querySelectorAll('.btn-load-arch').forEach(b => {
+          b.onclick = async () => {
+            const archId = b.dataset.id;
+            try {
+              const fullArch = await api.getSavedArchitecture(archId);
+              if (fullArch && fullArch.data) {
+                invalidateArchitectureResults(`Loaded saved architecture "${fullArch.name}".`);
+                state.currentArchitecture = normalizeArchitectureForSimulation(fullArch.data);
+                state.architectureName = fullArch.name;
+                state.architectureSource = 'upload';
+                state.analysisProvenance = { provider: 'sqlite_persistence', model_id: 'saved_record', is_mock: false, fallback_used: false };
+                state.lifecycleState = 'READY';
+                populateFormFromArchitecture(state.currentArchitecture);
+                updateWorkflowAvailability();
+                modal.style.display = 'none';
+                showAlert('upload-alert', `Loaded saved architecture "${fullArch.name}" from SQLite persistence.`, 'info');
+              }
+            } catch (err) {
+              alert(`Failed to load architecture: ${err.message}`);
+            }
+          };
+        });
+
+        modalBody.querySelectorAll('.btn-del-arch').forEach(b => {
+          b.onclick = async () => {
+            const archId = b.dataset.id;
+            if (confirm(`Delete saved architecture "${archId}"?`)) {
+              try {
+                await api.deleteSavedArchitecture(archId);
+                btnHistory.click();
+              } catch (err) {
+                alert(`Delete failed: ${err.message}`);
+              }
+            }
+          };
+        });
+      } catch (err) {
+        modalBody.innerHTML = `<div class="alert alert-danger">Error loading history: ${err.message}</div>`;
+      }
+    };
+  }
 }
 
 function populateFormFromArchitecture(arch) {
@@ -709,12 +864,19 @@ async function executeRootCauseInvestigation() {
     const m1Arch = {
       schema_version: "1.0",
       architecture_id: arch.architecture_id || "arch-inv-01",
-      components: arch.components.map(c => ({
-        id: c.id,
-        type: c.type,
-        name: c.name || c.id,
-        attributes: { cpu_cores: 2, capacity_rps: c.capacity_rps, replicas: c.replicas }
-      })),
+      components: arch.components.map(c => {
+        let t = (c.type || 'microservice').toLowerCase();
+        if (t === 'api_gateway') t = 'gateway';
+        if (t === 'service') t = 'microservice';
+        if (t === 'queue') t = 'message_queue';
+        if (t === 'db') t = 'database';
+        return {
+          id: c.id,
+          type: t,
+          name: c.name || c.id,
+          attributes: { cpu_cores: 2, capacity_rps: c.capacity_rps, replicas: c.replicas }
+        };
+      }),
       connections: arch.connections.map(cn => ({
         source: cn.source,
         target: cn.target,
@@ -843,6 +1005,161 @@ async function executeChaosSimulation() {
 // Renderers (Real Data Sources of Truth)
 // ============================================================================
 
+function renderCytoscapeGraph(arch) {
+  const container = document.getElementById('cy-canvas');
+  const placeholder = document.getElementById('cy-placeholder');
+  const infoEl = document.getElementById('cy-selected-info');
+  if (!container) return;
+
+  if (!arch || !arch.components || arch.components.length === 0) {
+    if (placeholder) placeholder.style.display = 'flex';
+    if (cyInstance) {
+      cyInstance.destroy();
+      cyInstance = null;
+    }
+    return;
+  }
+
+  if (placeholder) placeholder.style.display = 'none';
+
+  const typeColorMap = {
+    load_balancer: '#3b82f6',
+    api_server: '#a855f7',
+    database: '#10b981',
+    cache: '#f59e0b',
+    message_broker: '#06b6d4',
+    queue: '#14b8a6',
+    storage: '#ec4899',
+    cdn: '#f97316',
+    external_service: '#64748b',
+    unknown: '#8b5cf6',
+  };
+
+  const elements = [];
+
+  arch.components.forEach(c => {
+    elements.push({
+      group: 'nodes',
+      data: {
+        id: c.id,
+        label: `${c.name || c.id}\n(${c.capacity_rps} RPS)`,
+        type: c.type || 'api_server',
+        color: typeColorMap[c.type] || '#a855f7',
+        comp: c,
+      },
+    });
+  });
+
+  if (arch.connections) {
+    arch.connections.forEach((conn, idx) => {
+      elements.push({
+        group: 'edges',
+        data: {
+          id: `e-${conn.source}-${conn.target}-${idx}`,
+          source: conn.source,
+          target: conn.target,
+          label: `${conn.protocol || 'rpc'} (${conn.latency_overhead_ms || 1}ms)`,
+        },
+      });
+    });
+  }
+
+  try {
+    if (cyInstance) {
+      cyInstance.destroy();
+    }
+
+    cyInstance = cytoscape({
+      container,
+      elements,
+      style: [
+        {
+          selector: 'node',
+          style: {
+            'label': 'data(label)',
+            'text-valign': 'center',
+            'text-halign': 'center',
+            'color': '#ffffff',
+            'font-size': '10px',
+            'font-family': 'Outfit, Inter, sans-serif',
+            'font-weight': 600,
+            'text-wrap': 'wrap',
+            'background-color': 'data(color)',
+            'width': '135px',
+            'height': '62px',
+            'shape': 'round-rectangle',
+            'border-width': 2,
+            'border-color': 'rgba(255, 255, 255, 0.22)',
+            'text-outline-color': '#000000',
+            'text-outline-width': 1.5,
+          },
+        },
+        {
+          selector: 'node:selected',
+          style: {
+            'border-color': '#ffffff',
+            'border-width': 3,
+            'shadow-blur': 14,
+            'shadow-color': '#a855f7',
+          },
+        },
+        {
+          selector: 'edge',
+          style: {
+            'width': 2.5,
+            'line-color': 'rgba(168, 85, 247, 0.45)',
+            'target-arrow-color': '#a855f7',
+            'target-arrow-shape': 'triangle',
+            'curve-style': 'bezier',
+            'label': 'data(label)',
+            'font-size': '9px',
+            'color': '#94a3b8',
+            'text-background-color': '#070b14',
+            'text-background-opacity': 0.85,
+            'text-background-padding': '2px',
+          },
+        },
+      ],
+      layout: {
+        name: 'breadthfirst',
+        directed: true,
+        padding: 30,
+        spacingFactor: 1.2,
+      },
+      userZoomingEnabled: true,
+      userPanningEnabled: true,
+    });
+
+    cyInstance.on('tap', 'node', (evt) => {
+      const node = evt.target;
+      const c = node.data('comp');
+      if (infoEl && c) {
+        infoEl.style.display = 'block';
+        infoEl.innerHTML = `<strong>Selected Node:</strong> ${c.name || c.id} &bull; Type: <code>${c.type}</code> &bull; Capacity: <strong>${c.capacity_rps} RPS</strong> &bull; Replicas: <strong>${c.replicas}</strong> &bull; Base Latency: <strong>${c.base_latency_ms} ms</strong> &bull; Cost: <strong>$${c.cost_per_month_usd || 0}/mo</strong>`;
+      }
+    });
+
+    cyInstance.on('tap', (evt) => {
+      if (evt.target === cyInstance && infoEl) {
+        infoEl.style.display = 'none';
+      }
+    });
+
+    const btnFit = document.getElementById('btn-fit-cy');
+    if (btnFit) {
+      btnFit.onclick = () => cyInstance?.fit();
+    }
+    const btnRelayout = document.getElementById('btn-relayout-cy');
+    if (btnRelayout) {
+      btnRelayout.onclick = () => {
+        cyInstance?.layout({ name: 'breadthfirst', directed: true, padding: 30 })?.run();
+      };
+    }
+  } catch (err) {
+    console.warn('Cytoscape render error:', err);
+  }
+}
+
 function renderTopology() {
   const container = document.getElementById('topology-container');
   const connSummary = document.getElementById('connection-summary');
@@ -852,6 +1169,7 @@ function renderTopology() {
   if (!container) return;
 
   if (!state.currentArchitecture || !state.currentArchitecture.components || state.currentArchitecture.components.length === 0) {
+    renderCytoscapeGraph(null);
     container.innerHTML = `
       <div class="empty-state-card" style="grid-column: 1 / -1;">
         <h3>No Architecture Topology Loaded</h3>
@@ -872,6 +1190,7 @@ function renderTopology() {
   }
 
   const arch = normalizeArchitectureForSimulation(state.currentArchitecture);
+  renderCytoscapeGraph(arch);
   container.innerHTML = '';
 
   if (chaosSelect) {
@@ -936,6 +1255,131 @@ function renderTopology() {
   }
 }
 
+function renderSimulationCharts(metrics) {
+  const canvasLatency = document.getElementById('chart-latency-percentiles');
+  const canvasUtil = document.getElementById('chart-utilization');
+
+  if (chartLatency) {
+    chartLatency.destroy();
+    chartLatency = null;
+  }
+  if (chartUtilization) {
+    chartUtilization.destroy();
+    chartUtilization = null;
+  }
+
+  if (!metrics || !canvasLatency || !canvasUtil) return;
+
+  // Latency Percentiles Bar Chart
+  try {
+    const ctxLatency = canvasLatency.getContext('2d');
+    chartLatency = new Chart(ctxLatency, {
+      type: 'bar',
+      data: {
+        labels: ['p50 Median', 'p95 SLA', 'p99 Peak', 'Mean Avg'],
+        datasets: [{
+          label: 'Latency (ms)',
+          data: [
+            metrics.p50_latency_ms,
+            metrics.p95_latency_ms,
+            metrics.p99_latency_ms,
+            metrics.avg_latency_ms,
+          ],
+          backgroundColor: [
+            'rgba(59, 130, 246, 0.75)',
+            'rgba(168, 85, 247, 0.85)',
+            'rgba(239, 68, 68, 0.75)',
+            'rgba(16, 185, 129, 0.75)',
+          ],
+          borderColor: [
+            '#3b82f6',
+            '#a855f7',
+            '#ef4444',
+            '#10b981',
+          ],
+          borderWidth: 1.5,
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${ctx.raw.toFixed(2)} ms`,
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(255, 255, 255, 0.08)' },
+            ticks: { color: '#94a3b8' },
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: '#f8fafc', font: { weight: '600' } },
+          },
+        },
+      },
+    });
+  } catch (err) {
+    console.warn('Latency chart render error:', err);
+  }
+
+  // Component Utilization Horizontal Bar Chart
+  try {
+    if (metrics.component_breakdown) {
+      const compIds = Object.keys(metrics.component_breakdown);
+      const utilValues = compIds.map(id => (metrics.component_breakdown[id].utilization * 100));
+      const colors = utilValues.map(v => v >= 80 ? 'rgba(239, 68, 68, 0.85)' : (v >= 65 ? 'rgba(245, 158, 11, 0.85)' : 'rgba(16, 185, 129, 0.85)'));
+
+      const ctxUtil = canvasUtil.getContext('2d');
+      chartUtilization = new Chart(ctxUtil, {
+        type: 'bar',
+        data: {
+          labels: compIds,
+          datasets: [{
+            label: 'Utilization %',
+            data: utilValues,
+            backgroundColor: colors,
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => `${ctx.raw.toFixed(1)}% Capacity Used`,
+              },
+            },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              max: 100,
+              grid: { color: 'rgba(255, 255, 255, 0.08)' },
+              ticks: { color: '#94a3b8', callback: v => `${v}%` },
+            },
+            y: {
+              grid: { display: false },
+              ticks: { color: '#f8fafc', font: { weight: '600' } },
+            },
+          },
+        },
+      });
+    }
+  } catch (err) {
+    console.warn('Utilization chart render error:', err);
+  }
+}
+
 function renderSimulationResults(res) {
   const p95El = document.getElementById('sim-p95');
   const p50El = document.getElementById('sim-p50');
@@ -945,6 +1389,7 @@ function renderSimulationResults(res) {
   const bottlenecksContainer = document.getElementById('sim-bottlenecks');
 
   if (!res || !res.metrics) {
+    renderSimulationCharts(null);
     if (p95El) p95El.textContent = '-- ms';
     if (p50El) p50El.textContent = '-- ms';
     if (rpsEl) rpsEl.textContent = '-- RPS';
@@ -957,6 +1402,8 @@ function renderSimulationResults(res) {
     }
     return;
   }
+
+  renderSimulationCharts(res.metrics);
 
   const m = res.metrics;
   if (p95El) p95El.textContent = `${m.p95_latency_ms.toFixed(1)} ms`;
@@ -1061,11 +1508,102 @@ function renderInvestigationResults(res) {
   }
 }
 
+function renderParetoChart(res) {
+  const canvas = document.getElementById('chart-pareto');
+  if (chartPareto) {
+    chartPareto.destroy();
+    chartPareto = null;
+  }
+  if (!res || !canvas || !res.ranked_candidates || res.ranked_candidates.length === 0) return;
+
+  try {
+    const baselineCost = res.baseline_metrics.total_monthly_cost_usd;
+    const baselineP95 = res.baseline_metrics.p95_latency_ms;
+
+    const candidatePoints = res.ranked_candidates.map(c => ({
+      x: c.metrics.total_monthly_cost_usd,
+      y: c.metrics.p95_latency_ms,
+      label: c.name || c.candidate_id,
+      rank: c.rank,
+      pareto: c.is_pareto_optimal,
+    }));
+
+    const recommendedPoint = res.recommended_candidate ? [{
+      x: res.recommended_candidate.metrics.total_monthly_cost_usd,
+      y: res.recommended_candidate.metrics.p95_latency_ms,
+      label: `Recommended: ${res.recommended_candidate.name || res.recommended_candidate.candidate_id}`,
+    }] : [];
+
+    const ctx = canvas.getContext('2d');
+    chartPareto = new Chart(ctx, {
+      type: 'scatter',
+      data: {
+        datasets: [
+          {
+            label: 'Baseline Architecture',
+            data: [{ x: baselineCost, y: baselineP95, label: 'Baseline' }],
+            backgroundColor: '#94a3b8',
+            borderColor: '#ffffff',
+            pointRadius: 8,
+            pointHoverRadius: 10,
+          },
+          {
+            label: 'Evaluated Candidates',
+            data: candidatePoints,
+            backgroundColor: '#3b82f6',
+            borderColor: '#a855f7',
+            pointRadius: 6,
+            pointHoverRadius: 8,
+          },
+          {
+            label: 'Recommended Optimal (#1)',
+            data: recommendedPoint,
+            backgroundColor: '#10b981',
+            borderColor: '#ffffff',
+            pointRadius: 10,
+            pointHoverRadius: 12,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#f8fafc' } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const pt = ctx.raw;
+                return `${pt.label || 'Point'}: $${pt.x.toFixed(2)}/mo, ${pt.y.toFixed(1)}ms p95`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Estimated Monthly Cost ($ USD)', color: '#94a3b8' },
+            grid: { color: 'rgba(255, 255, 255, 0.08)' },
+            ticks: { color: '#94a3b8', callback: v => `$${v}` },
+          },
+          y: {
+            title: { display: true, text: 'p95 Latency SLA (ms)', color: '#94a3b8' },
+            grid: { color: 'rgba(255, 255, 255, 0.08)' },
+            ticks: { color: '#94a3b8', callback: v => `${v}ms` },
+          },
+        },
+      },
+    });
+  } catch (err) {
+    console.warn('Pareto chart render error:', err);
+  }
+}
+
 function renderOptimizationResults(res) {
   const recContainer = document.getElementById('optimization-recommended');
   const tableBody = document.getElementById('optimization-table-body');
 
   if (!res || !res.ranked_candidates) {
+    renderParetoChart(null);
     if (recContainer) recContainer.innerHTML = '';
     if (tableBody) {
       tableBody.innerHTML = `
@@ -1076,6 +1614,8 @@ function renderOptimizationResults(res) {
     }
     return;
   }
+
+  renderParetoChart(res);
 
   const rec = res.recommended_candidate;
   if (recContainer && rec) {
@@ -1141,14 +1681,82 @@ function renderOptimizationResults(res) {
   }
 }
 
+function renderChaosComparisonChart(res) {
+  const canvas = document.getElementById('chart-chaos-comparison');
+  if (chartChaos) {
+    chartChaos.destroy();
+    chartChaos = null;
+  }
+  if (!res || !canvas || !res.baseline_metrics || !res.failure_metrics) return;
+
+  try {
+    const baseM = res.baseline_metrics;
+    const failM = res.failure_metrics;
+
+    const ctx = canvas.getContext('2d');
+    chartChaos = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: ['p95 Latency (ms)', 'p50 Latency (ms)', 'Throughput (RPS)'],
+        datasets: [
+          {
+            label: 'Healthy Baseline',
+            data: [baseM.p95_latency_ms, baseM.p50_latency_ms, baseM.throughput_rps],
+            backgroundColor: 'rgba(16, 185, 129, 0.75)',
+            borderColor: '#10b981',
+            borderWidth: 1.5,
+            borderRadius: 4,
+          },
+          {
+            label: 'Under Injected Fault',
+            data: [failM.p95_latency_ms, failM.p50_latency_ms, failM.throughput_rps],
+            backgroundColor: 'rgba(239, 68, 68, 0.75)',
+            borderColor: '#ef4444',
+            borderWidth: 1.5,
+            borderRadius: 4,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#f8fafc' } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.toFixed(1)}`,
+            },
+          },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(255, 255, 255, 0.08)' },
+            ticks: { color: '#94a3b8' },
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: '#f8fafc', font: { weight: '600' } },
+          },
+        },
+      },
+    });
+  } catch (err) {
+    console.warn('Chaos chart render error:', err);
+  }
+}
+
 function renderChaosResults(res) {
   const container = document.getElementById('chaos-results-container');
   if (!container) return;
 
   if (!res || !res.baseline_metrics || !res.failure_metrics) {
+    renderChaosComparisonChart(null);
     container.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.9rem;">No failure simulation executed yet. Select a fault scenario above and click Inject Failure.</p>';
     return;
   }
+
+  renderChaosComparisonChart(res);
 
   const base = res.baseline_metrics;
   const fail = res.failure_metrics;

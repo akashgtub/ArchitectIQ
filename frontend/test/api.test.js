@@ -11,6 +11,14 @@ test('API client exports essential methods', () => {
   assert.strictEqual(typeof api.runBaselineSimulation, 'function');
   assert.strictEqual(typeof api.runOptimization, 'function');
   assert.strictEqual(typeof api.runChaos, 'function');
+  assert.strictEqual(typeof api.listPresets, 'function');
+  assert.strictEqual(typeof api.getPreset, 'function');
+  assert.strictEqual(typeof api.listSavedArchitectures, 'function');
+  assert.strictEqual(typeof api.saveArchitecture, 'function');
+  assert.strictEqual(typeof api.getSavedArchitecture, 'function');
+  assert.strictEqual(typeof api.deleteSavedArchitecture, 'function');
+  assert.strictEqual(typeof api.listSimulations, 'function');
+  assert.strictEqual(typeof api.getSimulation, 'function');
 });
 
 test('API client defaults to relative URL or configured base', () => {

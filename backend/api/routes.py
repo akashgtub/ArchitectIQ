@@ -61,6 +61,8 @@ from backend.simulator.schemas import (
     SimulationResult,
     WorkloadConfig,
 )
+from backend.api.presets import get_preset, list_presets
+from backend.persistence.repositories import ArchitectureRepository, SimulationRepository
 
 logger = logging.getLogger("architectiq.api")
 
@@ -140,6 +142,91 @@ async def health_check():
 
 
 # ============================================================================
+# Presets & Persistence History Endpoints
+# ============================================================================
+
+class SaveArchitectureRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: Optional[str] = None
+    name: str
+    description: Optional[str] = ""
+    data: Dict[str, Any]
+    schema_version: Optional[str] = "1.0"
+
+
+@router.get("/api/v1/presets", summary="List Architecture Presets", tags=["Presets"])
+async def api_list_presets():
+    """Returns catalog of pre-configured production architecture templates."""
+    return {"presets": list_presets()}
+
+
+@router.get("/api/v1/presets/{preset_id}", summary="Get Architecture Preset", tags=["Presets"])
+async def api_get_preset(preset_id: str):
+    """Retrieve full architecture specification for a preset."""
+    preset = get_preset(preset_id)
+    if not preset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Preset '{preset_id}' not found")
+    return preset
+
+
+@router.get("/api/v1/history/architectures", summary="List Saved Architectures", tags=["History"])
+async def api_list_architectures(limit: int = 50):
+    """List saved architectures from persistent SQLite storage."""
+    return {"architectures": ArchitectureRepository.list_architectures(limit=limit)}
+
+
+@router.post(
+    "/api/v1/history/architectures",
+    status_code=status.HTTP_201_CREATED,
+    summary="Save Architecture",
+    tags=["History"],
+)
+async def api_save_architecture(payload: SaveArchitectureRequest):
+    """Save or update architecture definition in persistent storage."""
+    arch_id = payload.id or payload.data.get("architecture_id") or f"arch-{uuid.uuid4().hex[:8]}"
+    return ArchitectureRepository.save_architecture(
+        arch_id=arch_id,
+        name=payload.name,
+        description=payload.description or "",
+        schema_version=payload.schema_version or "1.0",
+        data=payload.data,
+    )
+
+
+@router.get("/api/v1/history/architectures/{arch_id}", summary="Get Saved Architecture", tags=["History"])
+async def api_get_saved_architecture(arch_id: str):
+    """Retrieve a specific saved architecture by ID."""
+    arch = ArchitectureRepository.get_architecture(arch_id)
+    if not arch:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Architecture '{arch_id}' not found")
+    return arch
+
+
+@router.delete("/api/v1/history/architectures/{arch_id}", summary="Delete Saved Architecture", tags=["History"])
+async def api_delete_saved_architecture(arch_id: str):
+    """Delete a saved architecture by ID."""
+    success = ArchitectureRepository.delete_architecture(arch_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Architecture '{arch_id}' not found")
+    return {"status": "deleted", "id": arch_id}
+
+
+@router.get("/api/v1/history/simulations", summary="List Simulation History", tags=["History"])
+async def api_list_simulations(architecture_id: Optional[str] = None, run_type: Optional[str] = None, limit: int = 50):
+    """List simulation, optimization, and chaos run history."""
+    return {"runs": SimulationRepository.list_runs(architecture_id=architecture_id, run_type=run_type, limit=limit)}
+
+
+@router.get("/api/v1/history/simulations/{run_id}", summary="Get Simulation Run Details", tags=["History"])
+async def api_get_simulation(run_id: str):
+    """Retrieve full results for a past simulation run."""
+    run = SimulationRepository.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Simulation run '{run_id}' not found")
+    return run
+
+
+# ============================================================================
 # Member 2 Core Simulation, Optimization, and Chaos Endpoints
 # (Mounted at both /api/... and /api/v1/... for backwards compatibility)
 # ============================================================================
@@ -159,11 +246,25 @@ async def health_check():
 def api_run_simulation(payload: SimulationRunRequest) -> SimulationResult:
     """Execute baseline discrete-event architecture simulation."""
     try:
-        return run_simulation(
+        sim_res = run_simulation(
             architecture=payload.architecture,
             workload=payload.workload,
             constraints=payload.constraints,
         )
+        try:
+            arch_id = getattr(payload.architecture, "architecture_id", None) or (
+                payload.architecture.get("architecture_id") if isinstance(payload.architecture, dict) else "arch-custom"
+            ) or "arch-custom"
+            SimulationRepository.record_run(
+                run_id=f"sim-{uuid.uuid4().hex[:8]}",
+                architecture_id=arch_id,
+                run_type="baseline",
+                result=sim_res.model_dump() if hasattr(sim_res, "model_dump") else dict(sim_res),
+                workload=payload.workload.model_dump() if hasattr(payload.workload, "model_dump") else dict(payload.workload),
+            )
+        except Exception as persist_err:
+            logger.warning("Failed to persist simulation run: %s", persist_err)
+        return sim_res
     except SimulationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -217,6 +318,20 @@ async def api_optimize_architecture(payload: OptimizationRunRequest) -> Optimiza
                 opt_res.trade_off_analysis = f"{opt_res.trade_off_analysis}\n\n[AI Model Explanation - {ai_provider.name.upper()} ({ai_provider.model_name})]:\n{ai_narrative}"
         except Exception as ai_err:
             logger.warning("AI optimization explanation skipped: %s", ai_err)
+
+        try:
+            arch_id = getattr(payload.architecture, "architecture_id", None) or (
+                payload.architecture.get("architecture_id") if isinstance(payload.architecture, dict) else "arch-custom"
+            ) or "arch-custom"
+            SimulationRepository.record_run(
+                run_id=f"opt-{uuid.uuid4().hex[:8]}",
+                architecture_id=arch_id,
+                run_type="optimization",
+                result=opt_res.model_dump() if hasattr(opt_res, "model_dump") else dict(opt_res),
+                workload=payload.workload.model_dump() if hasattr(payload.workload, "model_dump") else dict(payload.workload),
+            )
+        except Exception as persist_err:
+            logger.warning("Failed to persist optimization run: %s", persist_err)
 
         return opt_res
     except SimulationError as e:
@@ -272,6 +387,20 @@ async def api_simulate_failure(payload: ChaosRunRequest) -> FailureSimulationRes
                 chaos_res.resilience_summary = f"{chaos_res.resilience_summary}\n\n[AI Resilience Analysis - {ai_provider.name.upper()} ({ai_provider.model_name})]:\n{ai_chaos_narrative}"
         except Exception as ai_err:
             logger.warning("AI chaos explanation skipped: %s", ai_err)
+
+        try:
+            arch_id = getattr(payload.architecture, "architecture_id", None) or (
+                payload.architecture.get("architecture_id") if isinstance(payload.architecture, dict) else "arch-custom"
+            ) or "arch-custom"
+            SimulationRepository.record_run(
+                run_id=f"chaos-{uuid.uuid4().hex[:8]}",
+                architecture_id=arch_id,
+                run_type="chaos",
+                result=chaos_res.model_dump() if hasattr(chaos_res, "model_dump") else dict(chaos_res),
+                workload=payload.workload.model_dump() if hasattr(payload.workload, "model_dump") else dict(payload.workload),
+            )
+        except Exception as persist_err:
+            logger.warning("Failed to persist chaos run: %s", persist_err)
 
         return chaos_res
     except SimulationError as e:
@@ -440,6 +569,18 @@ async def analyze_architecture(
             user_workload=user_workload,
             user_constraints=user_constraints,
         )
+        if result and getattr(result, "architecture", None):
+            try:
+                ArchitectureRepository.save_architecture(
+                    arch_id=result.architecture.architecture_id,
+                    name=getattr(result.architecture, "name", result.architecture.architecture_id) or result.architecture.architecture_id,
+                    data=result.architecture.model_dump() if hasattr(result.architecture, "model_dump") else dict(result.architecture),
+                    description=requirements or "Extracted architecture diagram",
+                    schema_version=result.architecture.schema_version,
+                )
+            except Exception as persist_err:
+                logger.warning("Failed to persist extracted architecture: %s", persist_err)
+
         return result
 
     except ImageValidationError as e:

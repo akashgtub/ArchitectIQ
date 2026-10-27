@@ -12,9 +12,16 @@ from __future__ import annotations
 import io
 from typing import Tuple
 from PIL import Image, UnidentifiedImageError
+try:
+    from PIL.Image import DecompressionBombError
+except ImportError:
+    class DecompressionBombError(Exception):
+        pass
+
+# Protect against decompression bombs
+Image.MAX_IMAGE_PIXELS = 16_777_216  # 4096 * 4096 max pixels
 
 from backend.config import settings
-from backend.shared.schemas import ValidationIssue, ValidationSeverity
 
 
 class ImageValidationError(Exception):
@@ -82,6 +89,11 @@ def validate_image_bytes(image_bytes: bytes, filename: str = "upload.png") -> Tu
 
             return width, height, img_format
 
+    except DecompressionBombError:
+        raise ImageValidationError(
+            "Image exceeds safe pixel density limits (potential decompression bomb detected)",
+            code="ERR_IMAGE_DECOMPRESSION_BOMB",
+        )
     except UnidentifiedImageError:
         raise ImageValidationError(
             "Uploaded file is not a recognized image or is corrupt",
