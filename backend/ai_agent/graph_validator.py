@@ -248,20 +248,45 @@ class GraphValidator:
             )
         else:
             try:
-                rps = float(workload_raw.get("requests_per_second", -1))
-                if rps <= 0:
+                raw_rps = workload_raw.get("requests_per_second")
+                if raw_rps is None:
+                    rps = 1000.0
+                    workload_raw["requests_per_second"] = rps
+                    assumptions.append("Workload requests_per_second not specified; defaulted to 1,000 RPS baseline.")
+                elif float(raw_rps) <= 0:
                     issues.append(
                         ValidationIssue(
                             severity=ValidationSeverity.ERROR,
                             code="ERR_INVALID_WORKLOAD_RPS",
-                            message=f"Workload 'requests_per_second' must be greater than 0 (got {rps}).",
+                            message=f"Workload 'requests_per_second' must be greater than 0 (got {raw_rps}).",
                             affected_components=[],
                             requires_clarification=True,
                         )
                     )
+                else:
+                    rps = float(raw_rps)
 
-                read_r = float(workload_raw.get("read_ratio", -1))
-                write_r = float(workload_raw.get("write_ratio", -1))
+                raw_read = workload_raw.get("read_ratio")
+                raw_write = workload_raw.get("write_ratio")
+
+                if raw_read is None and raw_write is None:
+                    read_r = 0.8
+                    write_r = 0.2
+                    workload_raw["read_ratio"] = read_r
+                    workload_raw["write_ratio"] = write_r
+                    assumptions.append("Workload read/write split not explicitly specified; assumed standard web traffic (80% read / 20% write).")
+                elif raw_read is None and raw_write is not None:
+                    write_r = float(raw_write)
+                    read_r = max(0.0, 1.0 - write_r)
+                    workload_raw["read_ratio"] = read_r
+                elif raw_write is None and raw_read is not None:
+                    read_r = float(raw_read)
+                    write_r = max(0.0, 1.0 - read_r)
+                    workload_raw["write_ratio"] = write_r
+                else:
+                    read_r = float(raw_read)
+                    write_r = float(raw_write)
+
                 if read_r < 0 or read_r > 1.0 or write_r < 0 or write_r > 1.0:
                     issues.append(
                         ValidationIssue(
@@ -295,8 +320,6 @@ class GraphValidator:
                     )
                 )
 
-        # 5. Component Semantic Checks
-        # E.g. Check database without attributes
         for comp in valid_components:
             cid = comp.get("id")
             ctype = comp.get("type")
@@ -306,7 +329,6 @@ class GraphValidator:
             if ctype == ComponentType.CACHE.value and not attrs.get("capacity_mb"):
                 assumptions.append(f"Cache '{cid}' did not specify capacity; assuming standard 2GB in-memory cache.")
 
-        # Determine validity: valid if NO issues with severity == ERROR
         has_blocking_errors = any(issue.severity == ValidationSeverity.ERROR for issue in issues)
         is_valid = not has_blocking_errors
 

@@ -189,7 +189,6 @@ When Member 2 synthesizes candidate architectures:
 
 ### Step 1: Start Member 1 Engine
 ```bash
-# Terminal 1
 cd ArchitectIQ
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -197,7 +196,6 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ### Step 2: Configure Member 2 Simulator URL
 When Member 2 starts their simulation engine on port 8001:
 ```bash
-# In .env:
 SIMULATOR_BASE_URL=http://localhost:8001
 USE_MOCK_SIMULATOR=false
 ```

@@ -212,13 +212,10 @@ Compiles the frontend with Vite into `frontend/dist/` and verifies required asse
 ### Verify Deployment Endpoints
 Once deployed, verify your service with:
 ```bash
-# 1. Health Check
 curl -f https://<your-render-app>.onrender.com/health
 
-# 2. Swagger Documentation
 curl -f https://<your-render-app>.onrender.com/docs
 
-# 3. Frontend Dashboard
 curl -f https://<your-render-app>.onrender.com/
 ```
 

@@ -9,10 +9,18 @@ Configures CORS, routers, logging, and error handling.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import HTTPException as FastAPIHTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 from backend.api.routes import router as api_v1_router
 from backend.config import settings
@@ -24,6 +32,18 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("archpilot.main")
+
+# Prometheus Metrics Definitions
+REQUEST_COUNT = Counter(
+    "architectiq_http_requests_total",
+    "Total HTTP requests handled by ArchitectIQ backend",
+    ["method", "endpoint", "status_code"],
+)
+REQUEST_LATENCY = Histogram(
+    "architectiq_http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "endpoint"],
+)
 
 
 @asynccontextmanager
@@ -57,16 +77,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def prometheus_metrics_middleware(request: Request, call_next):
+    if request.url.path == "/metrics":
+        return await call_next(request)
+    start_time = time.time()
+    response = await call_next(request)
+    duration = time.time() - start_time
+    status_code = str(response.status_code)
+    REQUEST_COUNT.labels(method=request.method, endpoint=request.url.path, status_code=status_code).inc()
+    REQUEST_LATENCY.labels(method=request.method, endpoint=request.url.path).observe(duration)
+    return response
+
+
 # Include API router
 app.include_router(api_v1_router)
 
-# Mount frontend files and assets
-from pathlib import Path
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.exceptions import HTTPException as FastAPIHTTPException
+# Prometheus metrics endpoint
+@app.get("/metrics", tags=["Monitoring"], include_in_schema=False)
+def get_metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
+
+# Mount frontend files and assets
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 dist_index = frontend_dist / "index.html"
 dist_assets = frontend_dist / "assets"
@@ -97,11 +131,13 @@ async def serve_frontend_root():
 
 @app.get("/{full_path:path}", tags=["Frontend"], include_in_schema=False)
 async def serve_frontend_fallback(full_path: str):
-    # Guard API, health, docs, and schema endpoints against falling back to frontend
+    # Guard API, health, metrics, docs, and schema endpoints against falling back to frontend
     if (
         full_path.startswith("api/")
         or full_path == "api"
         or full_path.startswith("health")
+        or full_path.startswith("metrics")
+        or full_path == "metrics"
         or full_path.startswith("docs")
         or full_path.startswith("redoc")
         or full_path == "openapi.json"
@@ -123,7 +159,6 @@ async def serve_frontend_fallback(full_path: str):
 
     # SPA routing fallback
     return _get_frontend_response()
-
 
 
 @app.exception_handler(Exception)
@@ -149,4 +184,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("backend.main:app", host="0.0.0.0", port=port, reload=False)
-

@@ -155,27 +155,49 @@ def _clean_json_text(text: str) -> str:
 
 
 
-EXTRACTION_SYSTEM_INSTRUCTION = """You are an expert distributed systems architect analyzing an architecture diagram.
-Extract an exact, structured architecture representation without hallucinating components or unstated specifications.
+EXTRACTION_SYSTEM_INSTRUCTION = """You are an expert distributed systems architect analyzing an architecture diagram image.
+Extract an exact, structured architecture representation without hallucinating components or missing explicitly depicted nodes.
 
-CRITICAL RULES:
-1. Distinguish between:
+CRITICAL EXTRACTION RULES:
+1. Identify ALL visual components and tiers:
+   - For database clusters or read replicas (e.g. Primary DB, DB Replica 1, DB Replica 2), create a SEPARATE component for EACH node with type 'database'.
+   - Allowed component types: api_server, web_server, load_balancer, database, cache, message_queue, object_storage, microservice, gateway, worker, cdn, external_service, unknown.
+2. Extract visible capacities, counts, and performance annotations into component 'attributes':
+   - E.g. "(2 replicas)" -> {"replicas": 2}
+   - E.g. "400 RPS" -> {"capacity_rps": 400.0}
+   - E.g. "Latency: 35 ms" -> {"base_latency_ms": 35.0}
+   - E.g. "Hit Ratio: 75%" -> {"cache_hit_ratio": 0.75}
+3. Distinguish between:
    - "directly_observed": Elements with explicit visual shapes or text labels in the diagram.
    - "inferred": Assumptions made based on standard system design patterns (e.g. protocol HTTP).
    - "unknown": Information missing from diagram (e.g. cache TTL, DB storage).
-2. Allowed component types:
-   api_server, web_server, load_balancer, database, cache, message_queue, object_storage, microservice, gateway, worker, cdn, external_service, unknown
-3. Allowed connection types:
-   request (sync), async_message (queue/pubsub), data_access (DB/cache), dependency, stream
-4. Do NOT invent throughput, latency, or workload values if not explicitly visible or provided.
+4. Workload values:
+   - Extract visible requests per second (e.g. "1500 RPS" -> requests_per_second: 1500.0).
+   - If read/write ratio is not explicitly labeled, default to standard web traffic: read_ratio: 0.8, write_ratio: 0.2 (never leave as null).
+5. Connections:
+   - Map all arrows linking tiers (e.g., Load Balancer -> API Servers -> Cache & Database Replicas).
+   - Use 'data_access' for connections to databases and caches, 'request' for load balancers and API servers.
 
 Output valid JSON matching:
 {
   "architecture_id": "arch-extracted-001",
-  "components": [{"id": "comp-id", "type": "component_type", "name": "Visible Name", "attributes": {}}],
-  "connections": [{"source": "id1", "target": "id2", "type": "request", "attributes": {}}],
-  "workload": {"requests_per_second": 500.0, "read_ratio": 0.8, "write_ratio": 0.2},
-  "constraints": {"max_p95_latency_ms": 200.0, "min_throughput_rps": null, "max_cost_per_hour": null, "min_availability": null},
+  "components": [
+    {"id": "comp-id", "type": "component_type", "name": "Visible Name", "attributes": {"replicas": 1, "capacity_rps": 1000.0, "base_latency_ms": 15.0}}
+  ],
+  "connections": [
+    {"source": "id1", "target": "id2", "type": "request", "attributes": {}}
+  ],
+  "workload": {
+    "requests_per_second": 1000.0,
+    "read_ratio": 0.8,
+    "write_ratio": 0.2
+  },
+  "constraints": {
+    "max_p95_latency_ms": 200.0,
+    "min_throughput_rps": null,
+    "max_cost_per_hour": null,
+    "min_availability": null
+  },
   "direct_observations": ["list of directly observed visual elements"],
   "inferred_elements": ["list of assumptions made"],
   "unknown_elements": ["list of missing details"],
@@ -185,11 +207,11 @@ Output valid JSON matching:
 
 class GeminiProvider(BaseAIProvider):
     """
-    Hosted multimodal Gemini provider (Gemini 2.0 Flash / 1.5 Flash).
+    Hosted multimodal Gemini provider (Gemini 2.0 Flash / 1.5 Flash / Flash Lite).
     Native image input support and structured reasoning.
     """
 
-    def __init__(self, api_key: str, model_id: str = "gemini-2.0-flash", base_url: str = ""):
+    def __init__(self, api_key: str, model_id: str = "gemini-flash-lite-latest", base_url: str = ""):
         self.api_key = api_key
         self._model_id = model_id
         self._base_url = base_url.rstrip("/")
@@ -223,7 +245,6 @@ class GeminiProvider(BaseAIProvider):
             bool(image_bytes),
         )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model_id}:generateContent?key={self.api_key}"
         parts: List[Dict[str, Any]] = [{"text": prompt}]
 
         if image_bytes:
@@ -248,67 +269,69 @@ class GeminiProvider(BaseAIProvider):
             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
         timeout_sec = float(settings.per_call_timeout_seconds)
-        try:
-            async with httpx.AsyncClient(timeout=timeout_sec) as client:
-                resp = await client.post(url, json=payload)
-                elapsed_ms = (time.time() - start_time) * 1000.0
 
-                if resp.status_code != 200:
+        # Candidate models to try in sequence if primary fails or times out
+        models_to_try = [self._model_id]
+        if "flash-lite" not in self._model_id:
+            models_to_try.append("gemini-flash-lite-latest")
+
+        last_error = None
+        for candidate_model in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={self.api_key}"
+            try:
+                async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                    resp = await client.post(url, json=payload)
+                    elapsed_ms = (time.time() - start_time) * 1000.0
+
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        try:
+                            candidate_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                            logger.info(
+                                "Gemini model invocation COMPLETED [request_id=%s, model=%s, elapsed=%.1fms]",
+                                req_id,
+                                candidate_model,
+                                elapsed_ms,
+                            )
+                            return candidate_text
+                        except (KeyError, IndexError) as err:
+                            raise ModelClientError(
+                                f"Malformed Gemini API response from '{candidate_model}': {err}",
+                                code="ERR_GEMINI_MALFORMED",
+                            )
+
                     sanitized_err = _sanitize_text(resp.text[:300])
                     if resp.status_code in (401, 403):
-                        code = "ERR_GEMINI_AUTH"
-                        msg = f"Google Gemini authentication failed (HTTP {resp.status_code}). Verify GEMINI_API_KEY."
+                        raise ModelClientError(
+                            f"Google Gemini authentication failed (HTTP {resp.status_code}). Verify GEMINI_API_KEY.",
+                            code="ERR_GEMINI_AUTH",
+                        )
+                    if resp.status_code == 429:
+                        last_error = ModelClientError(
+                            f"Google Gemini quota exceeded (HTTP 429): {sanitized_err}",
+                            code="ERR_GEMINI_QUOTA",
+                        )
                     elif resp.status_code == 404:
-                        code = "ERR_GEMINI_MODEL_NOT_FOUND"
-                        msg = f"Google Gemini model '{self._model_id}' was not found or is deprecated: {sanitized_err}"
-                    elif resp.status_code == 429:
-                        code = "ERR_GEMINI_QUOTA"
-                        msg = f"Google Gemini API quota or rate limit exceeded: {sanitized_err}"
-                    elif resp.status_code == 503:
-                        code = "ERR_GEMINI_UNAVAILABLE"
-                        msg = f"Google Gemini model temporarily unavailable or experiencing high demand: {sanitized_err}"
+                        last_error = ModelClientError(
+                            f"Google Gemini model not found (HTTP 404): {sanitized_err}",
+                            code="ERR_GEMINI_MODEL_NOT_FOUND",
+                        )
                     else:
-                        code = "ERR_GEMINI_API_HTTP"
-                        msg = f"Gemini API returned HTTP {resp.status_code}: {sanitized_err}"
+                        last_error = ModelClientError(
+                            f"Gemini API returned HTTP {resp.status_code}: {sanitized_err}",
+                            code="ERR_GEMINI_API_HTTP",
+                        )
+                    logger.warning("Gemini model '%s' returned HTTP %d: %s. Trying fallback if available.", candidate_model, resp.status_code, sanitized_err)
+            except (httpx.TimeoutException, httpx.RequestError) as exc:
+                elapsed_ms = (time.time() - start_time) * 1000.0
+                sanitized_exc = _sanitize_text(str(exc))
+                logger.warning("Gemini model '%s' failed/timed out after %.1fms: %s", candidate_model, elapsed_ms, sanitized_exc)
+                last_error = ModelClientError(f"Google Gemini request failed for '{candidate_model}': {sanitized_exc}", code="ERR_GEMINI_TIMEOUT")
 
-                    logger.error(
-                        "Gemini invocation FAILED [request_id=%s, status=%d, elapsed=%.1fms]: %s",
-                        req_id,
-                        resp.status_code,
-                        elapsed_ms,
-                        msg,
-                    )
-                    raise ModelClientError(msg, code=code)
+        if last_error:
+            raise last_error
+        raise ModelClientError("Google Gemini invocation failed for all candidate models.", code="ERR_GEMINI_FAILED")
 
-                data = resp.json()
-                try:
-                    candidate_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    logger.info(
-                        "Gemini model invocation COMPLETED [request_id=%s, elapsed=%.1fms]",
-                        req_id,
-                        elapsed_ms,
-                    )
-                    return candidate_text
-                except (KeyError, IndexError) as err:
-                    raise ModelClientError(
-                        f"Malformed Gemini API response: {err}",
-                        code="ERR_GEMINI_MALFORMED",
-                    )
-        except httpx.TimeoutException:
-            elapsed_ms = (time.time() - start_time) * 1000.0
-            logger.error("Gemini invocation TIMED OUT [request_id=%s, elapsed=%.1fms]", req_id, elapsed_ms)
-            raise ModelClientError(
-                f"Google Gemini request timed out after {timeout_sec}s for model '{self._model_id}'",
-                code="ERR_GEMINI_TIMEOUT",
-            )
-        except httpx.RequestError as exc:
-            elapsed_ms = (time.time() - start_time) * 1000.0
-            sanitized_exc = _sanitize_text(str(exc))
-            logger.error("Gemini connection FAILED [request_id=%s, elapsed=%.1fms]: %s", req_id, elapsed_ms, sanitized_exc)
-            raise ModelClientError(
-                f"Google Gemini network error: {sanitized_exc}",
-                code="ERR_GEMINI_CONNECTION",
-            )
 
     async def extract_architecture(
         self,
@@ -335,7 +358,10 @@ class GeminiProvider(BaseAIProvider):
         )
         cleaned = _clean_json_text(raw_text)
         try:
-            return json.loads(cleaned)
+            parsed = json.loads(cleaned)
+            parsed["provider"] = "gemini"
+            parsed["model_id"] = self._model_id
+            return parsed
         except Exception as e:
             raise ModelClientError(f"Failed to parse Gemini JSON: {e}", code="ERR_INVALID_MODEL_JSON")
 

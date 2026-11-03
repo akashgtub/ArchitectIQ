@@ -1,0 +1,9 @@
+---
+# Local Environment Variables
+environment_name: local
+k8s_namespace: architectiq-local
+backend_replicas: 1
+frontend_replicas: 1
+log_level: DEBUG
+enable_verbose_monitoring: true
+

@@ -198,25 +198,40 @@ class RootCauseInvestigator:
         p95 = baseline_metrics.get("p95_latency_ms")
         max_p95_constraint = architecture.constraints.max_p95_latency_ms
 
-        db_comp = next((c for c in architecture.components if c.type == ComponentType.DATABASE), None)
-        cache_comp = next((c for c in architecture.components if c.type == ComponentType.CACHE), None)
-        api_comps = [c for c in architecture.components if c.type in (ComponentType.API_SERVER, ComponentType.MICROSERVICE)]
+        # Component classification
+        db_comps = [c for c in architecture.components if c.type == ComponentType.DATABASE]
+        cache_comps = [c for c in architecture.components if c.type == ComponentType.CACHE]
+        api_comps = [c for c in architecture.components if c.type in (ComponentType.API_SERVER, ComponentType.MICROSERVICE, ComponentType.WEB_SERVER)]
+        lb_comps = [c for c in architecture.components if c.type in (ComponentType.LOAD_BALANCER, ComponentType.GATEWAY)]
 
-        # Find component metrics
-        db_metric = next((m for m in baseline.component_metrics if db_comp and m.component_id == db_comp.id), None)
-        api_metric = next((m for m in baseline.component_metrics if api_comps and m.component_id == api_comps[0].id), None)
+        # Find saturated database components
+        saturated_dbs = []
+        for db in db_comps:
+            m = next((cm for cm in baseline.component_metrics if cm.component_id == db.id), None)
+            if m and ((m.cpu_utilization_pct or 0.0) >= 70.0 or (m.error_rate_pct or 0.0) > 5.0):
+                saturated_dbs.append((db, m))
 
-        # 1. Hypothesis: Database Saturation / Queuing Bottleneck
-        if db_metric and (db_metric.cpu_utilization_pct or 0.0) >= 70.0:
+        # Find saturated API / compute components
+        saturated_apis = []
+        for api in api_comps:
+            m = next((cm for cm in baseline.component_metrics if cm.component_id == api.id), None)
+            if m and ((m.cpu_utilization_pct or 0.0) >= 60.0 or (m.error_rate_pct or 0.0) > 5.0):
+                saturated_apis.append((api, m))
+
+        # 1. Hypothesis: API Compute Tier Bottleneck (if API servers are saturated)
+        if saturated_apis:
+            sat_ids = [a.id for a, _ in saturated_apis]
+            sat_names = [a.name or a.id for a, _ in saturated_apis]
+            avg_util = sum((m.cpu_utilization_pct or 0.0) for _, m in saturated_apis) / len(saturated_apis)
             supp_evidence: List[EvidenceReference] = [
                 EvidenceReference(
                     run_id=baseline.run_id,
                     metric_name="cpu_utilization_pct",
-                    observed_value=db_metric.cpu_utilization_pct,
-                    baseline_value=db_metric.cpu_utilization_pct,
+                    observed_value=round(avg_util, 1),
+                    baseline_value=round(avg_util, 1),
                     diff=0.0,
                     unit="%",
-                    description=f"Database '{db_comp.id}' CPU utilization is high ({db_metric.cpu_utilization_pct:.1f}%) under baseline load.",
+                    description=f"API tier servers ({', '.join(sat_names)}) operating near/above capacity (avg {avg_util:.1f}% util).",
                 )
             ]
             if p95 and max_p95_constraint and p95 > max_p95_constraint:
@@ -228,39 +243,75 @@ class RootCauseInvestigator:
                         baseline_value=p95,
                         diff=0.0,
                         unit="ms",
-                        description=f"System baseline p95 latency ({p95}ms) exceeds target constraint ({max_p95_constraint}ms) by {p95 - max_p95_constraint:.1f}ms.",
+                        description=f"Elevated p95 latency ({p95}ms) exceeds constraint ({max_p95_constraint}ms) due to worker queueing.",
                     )
                 )
-
             hypotheses.append(
                 RootCauseHypothesis(
-                    hypothesis_id="HYP-001",
+                    hypothesis_id="HYP-API-001",
+                    title="API Server Compute Tier Capacity Bottleneck",
+                    description=(
+                        f"API tier component(s) {', '.join(sat_names)} are saturated under the baseline "
+                        f"{architecture.workload.requests_per_second} RPS workload. Insufficient compute capacity "
+                        "leads to request queue buildup and elevated p95 latency."
+                    ),
+                    affected_components=sat_ids,
+                    supporting_evidence=supp_evidence,
+                    contradicting_evidence=[],
+                    missing_evidence=["Latency reduction measurement upon scaling API server replicas"],
+                    confidence_label=ConfidenceLabel.HIGH if avg_util > 80.0 else ConfidenceLabel.MEDIUM,
+                    recommended_experiment=SupportedDiagnosticExperiment.SCALE_COMPONENT,
+                    status=HypothesisStatus.CANDIDATE,
+                )
+            )
+
+        # 2. Hypothesis: Database Saturation / Queuing Bottleneck (ONLY if databases are actually saturated)
+        if saturated_dbs:
+            sat_db_ids = [d.id for d, _ in saturated_dbs]
+            sat_db_names = [d.name or d.id for d, _ in saturated_dbs]
+            max_db_util = max((m.cpu_utilization_pct or 0.0) for _, m in saturated_dbs)
+            supp_evidence = [
+                EvidenceReference(
+                    run_id=baseline.run_id,
+                    metric_name="cpu_utilization_pct",
+                    observed_value=round(max_db_util, 1),
+                    baseline_value=round(max_db_util, 1),
+                    diff=0.0,
+                    unit="%",
+                    description=f"Database {', '.join(sat_db_names)} CPU utilization is high ({max_db_util:.1f}%) under baseline load.",
+                )
+            ]
+            hypotheses.append(
+                RootCauseHypothesis(
+                    hypothesis_id="HYP-DB-001",
                     title="Database Processing and Queuing Bottleneck",
                     description=(
-                        f"Database '{db_comp.id}' is operating at near capacity under the baseline {architecture.workload.requests_per_second} RPS workload. "
-                        "High contention leads to request queue buildup and elevated p95 latency."
+                        f"Database {', '.join(sat_db_names)} is operating at near capacity under the baseline "
+                        f"{architecture.workload.requests_per_second} RPS workload. Contention leads to queue buildup."
                     ),
-                    affected_components=[db_comp.id] if db_comp else [],
+                    affected_components=sat_db_ids,
                     supporting_evidence=supp_evidence,
                     contradicting_evidence=[],
                     missing_evidence=["Verification under increased load or DB read replica offloading"],
-                    confidence_label=ConfidenceLabel.HIGH if (db_metric.cpu_utilization_pct or 0) > 80.0 else ConfidenceLabel.MEDIUM,
+                    confidence_label=ConfidenceLabel.HIGH if max_db_util > 80.0 else ConfidenceLabel.MEDIUM,
                     recommended_experiment=SupportedDiagnosticExperiment.INCREASE_WORKLOAD,
                     status=HypothesisStatus.CANDIDATE,
                 )
             )
 
-        # 2. Hypothesis: Cache Inefficiency / Cache Bypass
-        if cache_comp and db_comp:
+        # 3. Hypothesis: Cache Inefficiency / Cache Bypass (if cache is present)
+        if cache_comps and db_comps:
+            cache_comp = cache_comps[0]
+            affected_ids = [cache_comp.id] + [d.id for d in db_comps[:2]]
             hypotheses.append(
                 RootCauseHypothesis(
-                    hypothesis_id="HYP-002",
+                    hypothesis_id="HYP-CACHE-001",
                     title="Cache Hit Ratio Degradation and DB Read Contention",
                     description=(
-                        f"If read traffic bypasses cache '{cache_comp.id}', excessive read operations fall back to '{db_comp.id}', "
-                        "exhausting database connection pools."
+                        f"If read traffic bypasses cache '{cache_comp.id}', excessive read operations fall back to database tier, "
+                        "increasing persistence tier read queueing."
                     ),
-                    affected_components=[cache_comp.id, db_comp.id],
+                    affected_components=affected_ids,
                     supporting_evidence=[],
                     contradicting_evidence=[],
                     missing_evidence=["Measurement of latency impact when cache is bypassed or disabled"],
@@ -270,17 +321,18 @@ class RootCauseInvestigator:
                 )
             )
 
-        # 3. Hypothesis: Write-Heavy Workload Contention
-        if architecture.workload.write_ratio >= 0.2 and db_comp:
+        # 4. Hypothesis: Write-Path Transaction Contention (if write ratio is notable)
+        if architecture.workload.write_ratio >= 0.2 and db_comps:
+            primary_db = next((d for d in db_comps if "primary" in d.id.lower() or "master" in d.id.lower()), db_comps[0])
             hypotheses.append(
                 RootCauseHypothesis(
-                    hypothesis_id="HYP-003",
+                    hypothesis_id="HYP-WRITE-001",
                     title="Write-Path Transaction Contention",
                     description=(
                         f"A write ratio of {architecture.workload.write_ratio*100:.0f}% may be causing lock contention "
-                        f"and disk I/O wait on primary database '{db_comp.id}'."
+                        f"and disk I/O wait on primary database '{primary_db.id}'."
                     ),
-                    affected_components=[db_comp.id],
+                    affected_components=[primary_db.id],
                     supporting_evidence=[],
                     contradicting_evidence=[],
                     missing_evidence=["Comparison against varied read/write ratio mixes"],
@@ -290,37 +342,7 @@ class RootCauseInvestigator:
                 )
             )
 
-        # 4. Hypothesis: API Compute Tier Scaling Limit
-        if api_metric and (api_metric.cpu_utilization_pct or 0.0) >= 60.0:
-            hypotheses.append(
-                RootCauseHypothesis(
-                    hypothesis_id="HYP-004",
-                    title="API Server Compute Tier Capacity Limit",
-                    description=(
-                        f"API tier component '{api_comps[0].id}' CPU utilization is elevated ({api_metric.cpu_utilization_pct:.1f}%), "
-                        "suggesting insufficient horizontal worker replicas."
-                    ),
-                    affected_components=[api_comps[0].id],
-                    supporting_evidence=[
-                        EvidenceReference(
-                            run_id=baseline.run_id,
-                            metric_name="cpu_utilization_pct",
-                            observed_value=api_metric.cpu_utilization_pct,
-                            baseline_value=api_metric.cpu_utilization_pct,
-                            diff=0.0,
-                            unit="%",
-                            description=f"API server CPU utilization at {api_metric.cpu_utilization_pct:.1f}%.",
-                        )
-                    ],
-                    contradicting_evidence=[],
-                    missing_evidence=["Latency reduction measurement upon scaling API server replicas"],
-                    confidence_label=ConfidenceLabel.MEDIUM,
-                    recommended_experiment=SupportedDiagnosticExperiment.SCALE_COMPONENT,
-                    status=HypothesisStatus.CANDIDATE,
-                )
-            )
-
-        # Fallback hypothesis if no obvious metrics triggered
+        # Fallback hypothesis if no obvious component saturation triggered
         if not hypotheses:
             target_ids = [c.id for c in architecture.components[:2]]
             hypotheses.append(

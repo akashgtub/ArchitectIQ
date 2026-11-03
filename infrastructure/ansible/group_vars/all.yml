@@ -1,0 +1,28 @@
+---
+# ArchitectIQ Global Ansible Variables
+app_name: architectiq
+app_version: "1.0.0"
+
+# Application Ports
+backend_port: 8000
+frontend_port: 80
+prometheus_port: 9090
+grafana_port: 3001
+
+# Container Registry Configuration
+registry_url: "docker.io"
+registry_user: "architectiq"
+backend_image_name: "architectiq/backend"
+frontend_image_name: "architectiq/frontend"
+
+# Healthcheck URLs
+backend_health_path: "/health"
+frontend_health_path: "/healthz"
+
+# AI Provider Configurations (Default fallbacks)
+ai_provider: "auto"
+allow_ai_fallback: "true"
+vision_ai_provider: "gemini"
+text_ai_provider: "huggingface"
+use_mock_simulator: "false"
+

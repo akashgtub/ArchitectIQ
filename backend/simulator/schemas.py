@@ -209,29 +209,31 @@ class ArchitectureGraph(BaseModel):
         return [c for c in self.connections if c.target == component_id]
 
     def get_entry_points(self) -> List[Component]:
-        """Identify entry-point components (load balancers or API servers with in-degree 0)."""
-        # Prioritize load balancers
-        lbs = [c for c in self.components if c.type == ComponentType.LOAD_BALANCER]
-        if lbs:
-            return lbs
-
-        # Next: API servers with no incoming connections
+        """Identify entry-point components (in-degree 0 components, prioritizing LBs / API servers)."""
         targets = {c.target for c in self.connections}
-        api_servers = [
-            c for c in self.components
-            if c.type == ComponentType.API_SERVER and c.id not in targets
-        ]
-        if api_servers:
-            return api_servers
-
-        # Components with in-degree 0 that have outgoing connections
         sources = {c.source for c in self.connections}
+
+        # Components with in-degree 0 that have outgoing connections (or single node)
         in_degree_zero_connected = [
             c for c in self.components
             if c.id not in targets and (c.id in sources or len(self.components) == 1)
         ]
         if in_degree_zero_connected:
             return in_degree_zero_connected
+
+        # If cyclic or all components have incoming connections:
+        # Prioritize load balancers
+        lbs = [c for c in self.components if c.type == ComponentType.LOAD_BALANCER]
+        if lbs:
+            return lbs
+
+        # Next: API servers
+        api_servers = [
+            c for c in self.components
+            if c.type == ComponentType.API_SERVER
+        ]
+        if api_servers:
+            return api_servers
 
         # Fallback to any in-degree zero component
         in_degree_zero = [c for c in self.components if c.id not in targets]

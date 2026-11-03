@@ -26,38 +26,36 @@ from backend.shared.schemas import (
 logger = logging.getLogger("archpilot.gemma_client")
 
 EXTRACTION_SYSTEM_INSTRUCTION = """You are an expert distributed systems architect analyzing an architecture diagram image.
-Your task is to extract an exact, structured architecture representation without hallucinating components or unstated specifications.
+Extract an exact, structured architecture representation without hallucinating components or missing explicitly depicted nodes.
 
-CRITICAL RULES:
-1. Distinguish between:
+CRITICAL EXTRACTION RULES:
+1. Identify ALL visual components and tiers:
+   - For database clusters or read replicas (e.g. Primary DB, DB Replica 1, DB Replica 2), create a SEPARATE component for EACH node with type 'database'.
+   - Allowed component types: api_server, web_server, load_balancer, database, cache, message_queue, object_storage, microservice, gateway, worker, cdn, external_service, unknown.
+2. Extract visible capacities, counts, and performance annotations into component 'attributes':
+   - E.g. "(2 replicas)" -> {"replicas": 2}
+   - E.g. "400 RPS" -> {"capacity_rps": 400.0}
+   - E.g. "Latency: 35 ms" -> {"base_latency_ms": 35.0}
+   - E.g. "Hit Ratio: 75%" -> {"cache_hit_ratio": 0.75}
+3. Distinguish between:
    - "directly_observed": Elements with explicit visual shapes or text labels in the diagram.
-   - "inferred": Assumptions made based on standard system design patterns (e.g., protocol assumed as HTTP).
-   - "unknown": Information missing from diagram (e.g., queue size, DB capacity, cache TTL).
-2. Allowed component types:
-   api_server, web_server, load_balancer, database, cache, message_queue, object_storage, microservice, gateway, worker, cdn, external_service, unknown
-3. Allowed connection types:
-   request (sync), async_message (queue/pubsub), data_access (DB/cache), dependency (health/config), stream (websocket/kafka)
-4. Do NOT invent throughput, latency, or workload values if not explicitly visible or provided.
-5. If important information is missing or ambiguous, output clear clarification questions.
+   - "inferred": Assumptions made based on standard system design patterns (e.g. protocol HTTP).
+   - "unknown": Information missing from diagram (e.g. cache TTL, DB storage).
+4. Workload values:
+   - Extract visible requests per second (e.g. "1500 RPS" -> requests_per_second: 1500.0).
+   - If read/write ratio is not explicitly labeled, default to standard web traffic: read_ratio: 0.8, write_ratio: 0.2 (never leave as null).
+5. Connections:
+   - Map all arrows linking tiers (e.g., Load Balancer -> API Servers -> Cache & Database Replicas).
+   - Use 'data_access' for connections to databases and caches, 'request' for load balancers and API servers.
 
-Return your response in STRICT, VALID JSON following this exact structure:
+Output valid JSON matching:
 {
   "architecture_id": "arch-extracted-001",
   "components": [
-    {
-      "id": "comp-id",
-      "type": "component_type",
-      "name": "Visible Name",
-      "attributes": {}
-    }
+    {"id": "comp-id", "type": "component_type", "name": "Visible Name", "attributes": {"replicas": 1, "capacity_rps": 1000.0, "base_latency_ms": 15.0}}
   ],
   "connections": [
-    {
-      "source": "comp-id-1",
-      "target": "comp-id-2",
-      "type": "request",
-      "attributes": {}
-    }
+    {"source": "id1", "target": "id2", "type": "request", "attributes": {}}
   ],
   "workload": {
     "requests_per_second": 1000.0,
@@ -73,17 +71,9 @@ Return your response in STRICT, VALID JSON following this exact structure:
   "direct_observations": ["list of directly observed visual elements"],
   "inferred_elements": ["list of assumptions made"],
   "unknown_elements": ["list of missing details"],
-  "clarification_questions": [
-    {
-      "question_id": "Q-001",
-      "question": "What is the expected read/write workload split?",
-      "affected_components": ["db-1"],
-      "category": "workload",
-      "suggested_options": ["80% read / 20% write", "50% read / 50% write", "Write-heavy (90% write)"]
-    }
-  ]
-}
-"""
+  "clarification_questions": []
+}"""
+
 
 
 from backend.ai_agent.providers import (
@@ -255,7 +245,7 @@ class GemmaClient:
             raw_text = response.text or ""
             return self._parse_json_response(raw_text)
         else:
-            # Fallback to direct HTTP call via httpx
+        
             return await self._call_gemini_rest(
                 prompt=prompt,
                 image_bytes=image_bytes,
@@ -313,7 +303,7 @@ class GemmaClient:
         Strips markdown code blocks if present and parses JSON safely.
         """
         cleaned = text.strip()
-        # Remove ```json ... ``` wrapper if present
+        
         json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
         if json_match:
             cleaned = json_match.group(1).strip()
@@ -339,7 +329,7 @@ class GemmaClient:
         Deterministic mock architecture extraction for unit tests and local testing.
         Explicitly documents components, connections, workload, and assumptions.
         """
-        # Determine workload
+      
         rps = 1000.0
         read_r = 0.8
         write_r = 0.2
@@ -348,7 +338,7 @@ class GemmaClient:
             read_r = float(user_workload.get("read_ratio", read_r))
             write_r = float(user_workload.get("write_ratio", write_r))
 
-        # Determine constraints
+  
         max_p95 = 200.0
         min_rps = None
         max_cost = None

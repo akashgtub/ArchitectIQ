@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: architectiq-backend
+  namespace: architectiq
+  labels:
+    app.kubernetes.io/name: architectiq-backend
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: architectiq-platform
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: architectiq-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: architectiq-backend
+        app.kubernetes.io/component: backend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: backend
+          image: architectiq/backend:v1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http-backend
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: architectiq-config
+            - secretRef:
+                name: architectiq-secrets
+                optional: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1024Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http-backend
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http-backend
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+

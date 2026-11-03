@@ -103,11 +103,40 @@ def adapt_m1_architecture_to_m2(arch: M1Architecture) -> tuple[M2ArchitectureGra
             default_latency = 30.0
             default_cost = 20.0
 
-        capacity_rps = float(attrs.get("capacity_rps", default_capacity))
-        replicas = int(attrs.get("replicas", attrs.get("instances", 1)))
-        base_latency_ms = float(attrs.get("base_latency_ms", default_latency))
+        def _clean_float(val: Any, fallback: float) -> float:
+            if val is None:
+                return fallback
+            try:
+                if isinstance(val, (int, float)):
+                    return float(val)
+                s = str(val).strip().replace("RPS", "").replace("rps", "").replace("ms", "").replace("%", "").strip()
+                return float(s)
+            except Exception:
+                return fallback
+
+        raw_cap = attrs.get("capacity_rps", attrs.get("rps", attrs.get("capacity")))
+        capacity_rps = _clean_float(raw_cap, default_capacity)
+
+        raw_replicas = attrs.get("replicas", attrs.get("instances", 1))
+        try:
+            if isinstance(raw_replicas, str):
+                raw_replicas = "".join(ch for ch in raw_replicas if ch.isdigit())
+            replicas = int(raw_replicas) if raw_replicas else 1
+        except Exception:
+            replicas = 1
+
+        raw_latency = attrs.get("base_latency_ms", attrs.get("latency_ms", attrs.get("latency")))
+        base_latency_ms = _clean_float(raw_latency, default_latency)
+
         cost_per_month_usd = float(attrs.get("cost_per_month_usd", default_cost * replicas))
-        cache_hit_ratio = float(attrs.get("cache_hit_ratio", 0.8)) if c_type == M2ComponentType.CACHE else None
+
+        cache_hit_ratio = None
+        if c_type == M2ComponentType.CACHE:
+            raw_hit = attrs.get("cache_hit_ratio", attrs.get("hit_ratio", 0.8))
+            h = _clean_float(raw_hit, 0.8)
+            if h > 1.0:
+                h = h / 100.0
+            cache_hit_ratio = max(0.01, min(0.99, h))
 
         m2_components.append(
             M2Component(
@@ -122,12 +151,23 @@ def adapt_m1_architecture_to_m2(arch: M1Architecture) -> tuple[M2ArchitectureGra
             )
         )
 
+    # Detect if database cluster has primary vs read replica split
+    db_ids = [c.id for c in m2_components if c.type == M2ComponentType.DATABASE]
+    has_primary_and_replicas = any("replica" in did.lower() for did in db_ids) and any("primary" in did.lower() or "master" in did.lower() for did in db_ids)
+
     m2_connections: List[M2Connection] = []
     for conn in arch.connections:
         attrs = conn.attributes or {}
         path_type = M2PathType.BOTH
-        if conn.type == M1ConnectionType.DATA_ACCESS:
-            path_type = M2PathType.BOTH
+
+        # Route writes to primary and reads to replicas if cluster distinction exists
+        if has_primary_and_replicas:
+            tgt_lower = conn.target.lower()
+            if "replica" in tgt_lower:
+                path_type = M2PathType.READ
+            elif "primary" in tgt_lower or "master" in tgt_lower:
+                path_type = M2PathType.WRITE
+
         m2_connections.append(
             M2Connection(
                 source=conn.source,
@@ -137,6 +177,7 @@ def adapt_m1_architecture_to_m2(arch: M1Architecture) -> tuple[M2ArchitectureGra
                 path_type=path_type,
             )
         )
+
 
     m2_graph = M2ArchitectureGraph(
         components=m2_components,

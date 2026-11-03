@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: architectiq
+  labels:
+    app.kubernetes.io/name: architectiq
+    app.kubernetes.io/part-of: architectiq-platform
+    environment: production
+

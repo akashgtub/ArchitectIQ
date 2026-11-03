@@ -1,0 +1,18 @@
+---
+# Role: container_runtime
+# Validates container engine readiness and network accessibility
+
+- name: Check container environment state
+  ansible.builtin.debug:
+    msg: "Verifying container runtime environment for {{ app_name }}"
+
+- name: Verify Docker daemon socket or container engine availability
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: docker_socket
+  when: ansible_os_family != "Windows"
+
+- name: Report container engine status
+  ansible.builtin.debug:
+    msg: "Container socket available: {{ docker_socket.stat.exists if docker_socket is defined else 'Local/WSL/Docker-Desktop managed' }}"
+

@@ -1,0 +1,10 @@
+---
+# ArchitectIQ - Environment Provisioning Playbook
+- name: Provision Host and Runtime Environment
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: environment_setup
+    - role: container_runtime
+    - role: kubernetes_readiness
+

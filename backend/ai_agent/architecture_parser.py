@@ -49,13 +49,13 @@ class ArchitectureParserService:
         Ingests image and requirements, validates the image, calls Gemma/Gemini,
         normalizes the topology, and validates the resulting architecture.
         """
-        # Step 1: Validate image if provided
+   
         img_format = "PNG"
         if image_bytes:
             width, height, img_format = validate_image_bytes(image_bytes, filename=filename)
             logger.info("Image validated successfully: %dx%d (%s)", width, height, img_format)
 
-        # Step 2: Extract architecture via model client
+     
         raw_extraction = await self.model_client.extract_architecture(
             image_bytes=image_bytes,
             image_format=img_format,
@@ -70,19 +70,19 @@ class ArchitectureParserService:
         unknown = raw_extraction.get("unknown_elements", [])
         raw_clarifications = raw_extraction.get("clarification_questions", [])
 
-        # Step 3: Graph and schema validation
+
         validation_result = self.graph_validator.validate_architecture(
             arch_data=raw_extraction,
             raw_clarifications=raw_clarifications,
             raw_assumptions=inferred,
         )
 
-        # Step 4: Construct verified Architecture object if valid
+
         architecture_obj: Optional[Architecture] = None
         status = "validation_failed"
         if validation_result.valid:
             try:
-                # Ensure schema_version is present
+   
                 raw_extraction["schema_version"] = raw_extraction.get("schema_version", SCHEMA_VERSION)
                 architecture_obj = Architecture(**raw_extraction)
                 status = "validated"
@@ -97,7 +97,16 @@ class ArchitectureParserService:
             or bool(raw_extraction.get("fallback_used"))
             or (provider_obj and provider_obj.name == "deterministic_fallback")
         )
-        provider_name = "deterministic_fallback" if is_fallback else (provider_obj.name if provider_obj else "gemma")
+        provider_name = (
+            "deterministic_fallback"
+            if is_fallback
+            else raw_extraction.get("provider", provider_obj.name if provider_obj else "gemma")
+        )
+        model_name = (
+            "mock-extractor"
+            if self.model_client.use_mock
+            else raw_extraction.get("model_id", self.model_client.model_id)
+        )
 
         return ArchitectureAnalyzeResponse(
             architecture_id=arch_id,
@@ -107,7 +116,7 @@ class ArchitectureParserService:
             direct_observations=direct_obs,
             inferred_elements=inferred,
             unknown_elements=unknown,
-            model_id="mock-extractor" if self.model_client.use_mock else self.model_client.model_id,
+            model_id=model_name,
             is_mock=self.model_client.use_mock,
             execution_mode="mock" if is_fallback else "real",
             fallback_used=is_fallback,

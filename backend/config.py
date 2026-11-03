@@ -44,8 +44,9 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("GEMINI_API_KEY", "")
     )
     gemini_model_id: str = Field(
-        default_factory=lambda: os.getenv("GEMINI_MODEL_ID", "gemini-flash-latest")
+        default_factory=lambda: os.getenv("GEMINI_MODEL_ID", "gemini-flash-lite-latest")
     )
+
     gemini_base_url: str = Field(
         default_factory=lambda: os.getenv("GEMINI_BASE_URL", "")
     )
@@ -103,8 +104,9 @@ class Settings(BaseModel):
         default_factory=lambda: int(os.getenv("MAX_RETRIES", "2"))
     )
     per_call_timeout_seconds: int = Field(
-        default_factory=lambda: int(os.getenv("PER_CALL_TIMEOUT_SECONDS", "10"))
+        default_factory=lambda: int(os.getenv("PER_CALL_TIMEOUT_SECONDS", "60"))
     )
+
 
     # Image Validation Constraints
     max_image_size_bytes: int = Field(

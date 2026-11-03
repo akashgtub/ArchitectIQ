@@ -1,0 +1,9 @@
+# Example Terraform Variables for ArchitectIQ
+kubeconfig_path    = "~/.kube/config"
+kubeconfig_context = "docker-desktop"
+environment        = "local"
+namespace          = "architectiq"
+backend_replicas   = 2
+frontend_replicas  = 2
+enable_monitoring  = true
+

@@ -1,0 +1,46 @@
+# ============================================================================
+# ArchitectIQ - Prometheus Monitoring Configuration
+# Scrapes system components, health endpoints, and infrastructure metrics
+# ============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+alerting:
+  alertmanagers: []
+
+rule_files: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ArchitectIQ Backend Health & Availability Probe
+  - job_name: 'architectiq-backend'
+    metrics_path: '/health'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ['backend:8000']
+    relabel_configs:
+      - target_label: service
+        replacement: architectiq-backend
+      - target_label: tier
+        replacement: api
+
+  # ArchitectIQ Frontend Availability Probe
+  - job_name: 'architectiq-frontend'
+    metrics_path: '/'
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ['frontend:80']
+    relabel_configs:
+      - target_label: service
+        replacement: architectiq-frontend
+      - target_label: tier
+        replacement: web

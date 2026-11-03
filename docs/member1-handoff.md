@@ -90,7 +90,6 @@ from backend.shared.schemas import Member1Handoff
 response = httpx.get("http://localhost:8000/api/v1/investigations/{id}/handoff")
 handoff = Member1Handoff.model_validate(response.json())
 
-# Member 2 extracts:
 arch = handoff.architecture
 hard_constraints = handoff.optimization_handoff.hard_constraints
 target_components = handoff.optimization_handoff.recommended_targets
@@ -155,9 +154,7 @@ git switch --track origin/member1-architecture-analysis
 ### If Member 2 is working on their own branch (`feature/simulation-engine`) and wants to integrate:
 ```bash
 git fetch origin
-# Option A: Merge Member 1's branch
 git merge origin/member1-architecture-analysis
 
-# Option B: Rebase onto Member 1's branch
 git rebase origin/member1-architecture-analysis
 ```
