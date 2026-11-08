@@ -58,8 +58,14 @@ pipeline {
         stage('1. Checkout') {
             steps {
                 echo ">>> Stage 1: Checkout repository and determine build metadata..."
-                checkout scm
                 script {
+                    try {
+                        if (!fileExists('.git')) {
+                            checkout scm
+                        }
+                    } catch (Exception e) {
+                        echo "SCM checkout fallback: Workspace already contains repository files (${e.message})."
+                    }
                     env.SHORT_COMMIT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                     env.IMAGE_TAG = "${BUILD_NUMBER}-${env.SHORT_COMMIT}"
                     currentBuild.displayName = "#${BUILD_NUMBER}-${env.SHORT_COMMIT}"
