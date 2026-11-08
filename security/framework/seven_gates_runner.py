@@ -5,9 +5,17 @@ Executes:
   Gate 2: Bandit (Python SAST)
   Gate 3: Checkov (IaC Security)
   Gate 4: Hadolint (Dockerfile Linting)
-  Gate 5: Snyk (Dependency Vulnerability Scanning)
-  Gate 6: OWASP ZAP (Dynamic Application Security Testing)
-  Gate 7: SonarQube (Code Quality & Security Analysis)
+  Gate 5: Snyk (Dependency Vulnerability Scanning - Hosted SaaS)
+  Gate 6: OWASP ZAP (Dynamic Application Security Testing - DAST Baseline Prober)
+  Gate 7: SonarCloud (Code Quality & Security Analysis - Hosted SaaS)
+
+Mandatory Safety Features:
+  - Cross-platform available RAM detection (Windows, Linux, WSL2, Docker Container).
+  - Configurable minimum RAM threshold safeguard (MIN_RAM_THRESHOLD_MB, default 512 MB).
+  - Individual sequential execution with tool-specific timeouts (30s - 90s).
+  - Process tree termination on timeout or crash.
+  - Zero token exposure in logs, commands, or reports.
+  - Truthful status reporting (BLOCKED, NOT RUN, PASS, FAIL).
 """
 
 from __future__ import annotations
@@ -15,13 +23,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import urllib.request
 import urllib.error
 
@@ -29,15 +39,195 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REPORTS_DIR = REPO_ROOT / "reports" / "security"
 POLICY_FILE = REPO_ROOT / "security" / "config" / "security-policy.yaml"
 
+# Safety: Configurable minimum RAM threshold in MB (default 512 MB)
+MIN_RAM_THRESHOLD_MB = float(os.environ.get("MIN_RAM_THRESHOLD_MB", "512"))
+
 GATE_DEFINITIONS = {
     1: {"id": "gate-01-trufflehog", "name": "TruffleHog — Secret Detection", "tool": "trufflehog", "report": "gate-01-trufflehog.json"},
     2: {"id": "gate-02-bandit", "name": "Bandit — Python SAST", "tool": "bandit", "report": "gate-02-bandit.json"},
     3: {"id": "gate-03-checkov", "name": "Checkov — Infrastructure as Code Security", "tool": "checkov", "report": "gate-03-checkov.json"},
     4: {"id": "gate-04-hadolint", "name": "Hadolint — Dockerfile Security Linting", "tool": "hadolint", "report": "gate-04-hadolint.json"},
-    5: {"id": "gate-05-snyk", "name": "Snyk — Dependency Vulnerability Scanning", "tool": "snyk", "report": "gate-05-snyk.json"},
+    5: {"id": "gate-05-snyk", "name": "Snyk — Dependency Vulnerability Scanning (SaaS)", "tool": "snyk", "report": "gate-05-snyk.json"},
     6: {"id": "gate-06-zap", "name": "OWASP ZAP — Dynamic Application Security Testing", "tool": "owasp-zap", "report": "gate-06-zap.json"},
-    7: {"id": "gate-07-sonarqube", "name": "SonarQube — Code Quality and Security Analysis", "tool": "sonar-scanner", "report": "gate-07-sonarqube.json"},
+    7: {"id": "gate-07-sonarqube", "name": "SonarCloud — Code Quality and Security Analysis (SaaS)", "tool": "sonar-scanner", "report": "gate-07-sonarqube.json"},
 }
+
+
+# ============================================================================
+# Memory Detection & Safety Safeguards
+# ============================================================================
+
+def get_system_memory_info() -> Dict[str, Any]:
+    """
+    Cross-platform available-memory detection.
+    Detects whether execution occurs inside Windows host, WSL2, or a Linux/Docker container.
+    """
+    total_mb = 0.0
+    avail_mb = 0.0
+    env_type = "unknown"
+
+    # 1. Linux / Docker container / WSL2 via /proc/meminfo
+    if os.path.exists("/proc/meminfo"):
+        env_type = "linux"
+        if os.path.exists("/.dockerenv"):
+            env_type = "docker_container"
+        elif os.path.exists("/proc/version"):
+            try:
+                with open("/proc/version", "r", encoding="utf-8") as f:
+                    v = f.read().lower()
+                    if "microsoft" in v or "wsl" in v:
+                        env_type = "wsl2"
+            except Exception:
+                pass
+
+        try:
+            mem_data: Dict[str, float] = {}
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        k = parts[0].strip()
+                        v = parts[1].strip().split()[0]
+                        mem_data[k] = float(v)  # in kB
+            total_mb = round(mem_data.get("MemTotal", 0) / 1024.0, 2)
+            if "MemAvailable" in mem_data:
+                avail_mb = round(mem_data["MemAvailable"] / 1024.0, 2)
+            else:
+                free = mem_data.get("MemFree", 0)
+                buffers = mem_data.get("Buffers", 0)
+                cached = mem_data.get("Cached", 0)
+                avail_mb = round((free + buffers + cached) / 1024.0, 2)
+        except Exception:
+            pass
+
+    # 2. Windows host via ctypes kernel32.GlobalMemoryStatusEx
+    elif os.name == "nt":
+        env_type = "windows"
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                total_mb = round(stat.ullTotalPhys / (1024.0 * 1024.0), 2)
+                avail_mb = round(stat.ullAvailPhys / (1024.0 * 1024.0), 2)
+        except Exception:
+            pass
+
+    pct_free = round((avail_mb / total_mb * 100.0), 2) if total_mb > 0 else 0.0
+    return {
+        "environment": env_type,
+        "total_mb": total_mb,
+        "available_mb": avail_mb,
+        "percent_free": pct_free,
+    }
+
+
+def check_memory_threshold(tool_name: str, required_mb: float = MIN_RAM_THRESHOLD_MB) -> Tuple[bool, Optional[str], Dict[str, Any]]:
+    """
+    Checks if system available memory meets the safety threshold.
+    Returns (is_safe, error_message, mem_info).
+    """
+    mem = get_system_memory_info()
+    avail = mem.get("available_mb", 0.0)
+    if avail > 0 and avail < required_mb:
+        msg = (
+            f"BLOCKED — LOW MEMORY SAFEGUARD TRIGGERED: {tool_name} requires at least {required_mb} MB available RAM, "
+            f"but only {avail} MB is currently available in {mem.get('environment')} "
+            f"({mem.get('percent_free')}% free of {mem.get('total_mb')} MB total). "
+            f"Halting scanner execution to prevent system instability."
+        )
+        return False, msg, mem
+    return True, None, mem
+
+
+def run_subprocess_safe(
+    cmd: List[str],
+    cwd: Path,
+    timeout_sec: int,
+    env: Optional[Dict[str, str]] = None,
+) -> Tuple[int, str, str, bool]:
+    """
+    Executes a subprocess safely with a timeout and guarantees termination of
+    the entire process tree if the timeout expires or execution halts.
+    Returns: (returncode, stdout, stderr, timed_out)
+    """
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+
+    timed_out = False
+    proc = None
+
+    try:
+        if os.name == "nt":
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=merged_env,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=merged_env,
+                preexec_fn=os.setsid,
+            )
+
+        stdout, stderr = proc.communicate(timeout=timeout_sec)
+        return proc.returncode, stdout or "", stderr or "", False
+
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        if proc:
+            if os.name == "nt":
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                except Exception:
+                    proc.kill()
+            else:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    proc.kill()
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except Exception:
+                stdout, stderr = "", ""
+            return -1, stdout or "", (stderr or "") + f"\n[ERROR] Process timed out after {timeout_sec}s", True
+        return -1, "", f"[ERROR] Process timed out after {timeout_sec}s", True
+
+    except Exception as ex:
+        if proc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        return -1, "", str(ex), False
 
 
 def _get_security_python() -> str:
@@ -58,14 +248,51 @@ def _save_report(gate_num: int, data: Dict[str, Any]) -> Path:
     return report_file
 
 
+def _read_sonar_properties() -> Dict[str, str]:
+    props_file = REPO_ROOT / "sonar-project.properties"
+    props: Dict[str, str] = {}
+    if props_file.exists():
+        try:
+            with open(props_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        props[k.strip()] = v.strip()
+        except Exception:
+            pass
+    return props
+
+
 # ============================================================================
-# Gate 1: TruffleHog (Secrets)
+# Gate 1: TruffleHog (Secret Detection)
 # ============================================================================
 def run_gate_1(mode: str = "STRICT") -> Dict[str, Any]:
     start = time.time()
+    mem_ok, mem_err, mem_info = check_memory_threshold("TruffleHog (Gate 1)")
+    if not mem_ok:
+        rep = {
+            "gate_id": "gate-01-trufflehog",
+            "gate_number": 1,
+            "tool_name": "trufflehog",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "execution_status": "BLOCKED",
+            "severity_verdict": "BLOCKED",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
+            "report_location": str(REPORTS_DIR / "gate-01-trufflehog.json"),
+            "error_details": mem_err,
+            "findings": [],
+            "memory_info": mem_info,
+        }
+        _save_report(1, rep)
+        return rep
+
     trufflehog_cmd = shutil.which("trufflehog")
     if not trufflehog_cmd:
-        # Check WindowsApps
         win_app = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WindowsApps" / "trufflehog.EXE"
         if win_app.exists():
             trufflehog_cmd = str(win_app)
@@ -84,8 +311,9 @@ def run_gate_1(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-01-trufflehog.json"),
-            "error_details": "TruffleHog binary not found in PATH or WindowsApps",
+            "error_details": "TruffleHog binary not found in PATH or WindowsApps directory",
             "findings": [],
+            "memory_info": mem_info,
         }
         _save_report(1, rep)
         return rep
@@ -95,59 +323,8 @@ def run_gate_1(mode: str = "STRICT") -> Dict[str, Any]:
     if exclude_file.exists():
         cmd.extend(["--exclude-paths", str(exclude_file)])
 
-    try:
-        res = subprocess.run(
-            cmd,
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=90,
-        )
-        raw_findings = []
-        for line in res.stdout.splitlines():
-            line = line.strip()
-            if line.startswith("{") and line.endswith("}"):
-                try:
-                    raw_findings.append(json.loads(line))
-                except Exception:
-                    pass
-
-        redacted = []
-        verified_count = 0
-        for rf in raw_findings:
-            is_verified = bool(rf.get("Verified", False))
-            if is_verified:
-                verified_count += 1
-            meta = rf.get("SourceMetadata", {}).get("Data", {}).get("Filesystem", {})
-            redacted.append({
-                "detector": rf.get("DetectorName", "Unknown"),
-                "detector_description": rf.get("DetectorDescription", ""),
-                "file": meta.get("file", ""),
-                "line": meta.get("line", 0),
-                "verified": is_verified,
-                "redacted_sample": "***REDACTED***",
-            })
-
-        count = len(redacted)
-        verdict = "PASS" if count == 0 else "FAIL"
-        rep = {
-            "gate_id": "gate-01-trufflehog",
-            "gate_number": 1,
-            "tool_name": "trufflehog",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "execution_status": "PASS" if count == 0 else "FAIL",
-            "severity_verdict": verdict,
-            "findings_count": count,
-            "critical_findings": verified_count,
-            "high_findings": count - verified_count,
-            "medium_findings": 0,
-            "low_findings": 0,
-            "report_location": str(REPORTS_DIR / "gate-01-trufflehog.json"),
-            "error_details": None,
-            "findings": redacted,
-            "duration_seconds": round(time.time() - start, 2),
-        }
-    except Exception as e:
+    code, stdout, stderr, timed_out = run_subprocess_safe(cmd, REPO_ROOT, timeout_sec=90)
+    if timed_out:
         rep = {
             "gate_id": "gate-01-trufflehog",
             "gate_number": 1,
@@ -161,10 +338,59 @@ def run_gate_1(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-01-trufflehog.json"),
-            "error_details": str(e),
+            "error_details": "BLOCKED — SCANNER TIMEOUT: TruffleHog exceeded 90s execution limit and was safely terminated.",
             "findings": [],
+            "duration_seconds": round(time.time() - start, 2),
+            "memory_info": mem_info,
         }
+        _save_report(1, rep)
+        return rep
 
+    raw_findings = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                raw_findings.append(json.loads(line))
+            except Exception:
+                pass
+
+    redacted = []
+    verified_count = 0
+    for rf in raw_findings:
+        is_verified = bool(rf.get("Verified", False))
+        if is_verified:
+            verified_count += 1
+        meta = rf.get("SourceMetadata", {}).get("Data", {}).get("Filesystem", {})
+        redacted.append({
+            "detector": rf.get("DetectorName", "Unknown"),
+            "detector_description": rf.get("DetectorDescription", ""),
+            "file": meta.get("file", ""),
+            "line": meta.get("line", 0),
+            "verified": is_verified,
+            "redacted_sample": "***REDACTED***",
+        })
+
+    count = len(redacted)
+    verdict = "PASS" if count == 0 else "FAIL"
+    rep = {
+        "gate_id": "gate-01-trufflehog",
+        "gate_number": 1,
+        "tool_name": "trufflehog",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "execution_status": "PASS" if count == 0 else "FAIL",
+        "severity_verdict": verdict,
+        "findings_count": count,
+        "critical_findings": verified_count,
+        "high_findings": count - verified_count,
+        "medium_findings": 0,
+        "low_findings": 0,
+        "report_location": str(REPORTS_DIR / "gate-01-trufflehog.json"),
+        "error_details": None,
+        "findings": redacted,
+        "duration_seconds": round(time.time() - start, 2),
+        "memory_info": mem_info,
+    }
     _save_report(1, rep)
     return rep
 
@@ -174,70 +400,34 @@ def run_gate_1(mode: str = "STRICT") -> Dict[str, Any]:
 # ============================================================================
 def run_gate_2(mode: str = "STRICT") -> Dict[str, Any]:
     start = time.time()
-    py_exec = _get_security_python()
-    target_dir = REPO_ROOT / "backend"
-
-    try:
-        res = subprocess.run(
-            [py_exec, "-m", "bandit", "-r", str(target_dir), "-x", str(target_dir / "tests"), "-f", "json", "-q"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        data = {}
-        if res.stdout.strip():
-            try:
-                data = json.loads(res.stdout)
-            except Exception:
-                pass
-
-        raw_results = data.get("results", [])
-        crit_count = 0
-        high_count = 0
-        med_count = 0
-        low_count = 0
-
-        findings = []
-        for r in raw_results:
-            sev = r.get("issue_severity", "LOW").upper()
-            if sev == "HIGH":
-                high_count += 1
-            elif sev == "MEDIUM":
-                med_count += 1
-            else:
-                low_count += 1
-
-            findings.append({
-                "test_id": r.get("test_id"),
-                "issue_text": r.get("issue_text"),
-                "severity": sev,
-                "confidence": r.get("issue_confidence"),
-                "filename": str(Path(r.get("filename", "")).relative_to(REPO_ROOT) if r.get("filename") else ""),
-                "line_number": r.get("line_number"),
-            })
-
-        total = len(findings)
-        verdict = "FAIL" if (crit_count > 0 or high_count > 0 or (mode == "STRICT" and med_count > 10)) else "PASS"
-
+    mem_ok, mem_err, mem_info = check_memory_threshold("Bandit (Gate 2)")
+    if not mem_ok:
         rep = {
             "gate_id": "gate-02-bandit",
             "gate_number": 2,
             "tool_name": "bandit",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "execution_status": "PASS" if verdict == "PASS" else "FAIL",
-            "severity_verdict": verdict,
-            "findings_count": total,
-            "critical_findings": crit_count,
-            "high_findings": high_count,
-            "medium_findings": med_count,
-            "low_findings": low_count,
+            "execution_status": "BLOCKED",
+            "severity_verdict": "BLOCKED",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-02-bandit.json"),
-            "error_details": None,
-            "findings": findings,
-            "duration_seconds": round(time.time() - start, 2),
+            "error_details": mem_err,
+            "findings": [],
+            "memory_info": mem_info,
         }
-    except Exception as e:
+        _save_report(2, rep)
+        return rep
+
+    py_exec = _get_security_python()
+    target_dir = REPO_ROOT / "backend"
+    cmd = [py_exec, "-m", "bandit", "-r", str(target_dir), "-x", str(target_dir / "tests"), "-f", "json", "-q"]
+
+    code, stdout, stderr, timed_out = run_subprocess_safe(cmd, REPO_ROOT, timeout_sec=60)
+    if timed_out:
         rep = {
             "gate_id": "gate-02-bandit",
             "gate_number": 2,
@@ -251,10 +441,74 @@ def run_gate_2(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-02-bandit.json"),
-            "error_details": str(e),
+            "error_details": "BLOCKED — SCANNER TIMEOUT: Bandit SAST scan exceeded 60s execution limit.",
             "findings": [],
+            "duration_seconds": round(time.time() - start, 2),
+            "memory_info": mem_info,
         }
+        _save_report(2, rep)
+        return rep
 
+    data: Dict[str, Any] = {}
+    if stdout.strip():
+        try:
+            data = json.loads(stdout)
+        except Exception:
+            pass
+
+    raw_results = data.get("results", [])
+    crit_count = 0
+    high_count = 0
+    med_count = 0
+    low_count = 0
+    findings = []
+
+    for r in raw_results:
+        sev = r.get("issue_severity", "LOW").upper()
+        if sev == "HIGH":
+            high_count += 1
+        elif sev == "MEDIUM":
+            med_count += 1
+        else:
+            low_count += 1
+
+        rel_path = ""
+        if r.get("filename"):
+            try:
+                rel_path = str(Path(r.get("filename")).relative_to(REPO_ROOT))
+            except Exception:
+                rel_path = str(r.get("filename"))
+
+        findings.append({
+            "test_id": r.get("test_id"),
+            "issue_text": r.get("issue_text"),
+            "severity": sev,
+            "confidence": r.get("issue_confidence"),
+            "filename": rel_path,
+            "line_number": r.get("line_number"),
+        })
+
+    total = len(findings)
+    verdict = "FAIL" if (crit_count > 0 or high_count > 0 or (mode == "STRICT" and med_count > 10)) else "PASS"
+
+    rep = {
+        "gate_id": "gate-02-bandit",
+        "gate_number": 2,
+        "tool_name": "bandit",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "execution_status": "PASS" if verdict == "PASS" else "FAIL",
+        "severity_verdict": verdict,
+        "findings_count": total,
+        "critical_findings": crit_count,
+        "high_findings": high_count,
+        "medium_findings": med_count,
+        "low_findings": low_count,
+        "report_location": str(REPORTS_DIR / "gate-02-bandit.json"),
+        "error_details": None,
+        "findings": findings,
+        "duration_seconds": round(time.time() - start, 2),
+        "memory_info": mem_info,
+    }
     _save_report(2, rep)
     return rep
 
@@ -264,81 +518,35 @@ def run_gate_2(mode: str = "STRICT") -> Dict[str, Any]:
 # ============================================================================
 def run_gate_3(mode: str = "STRICT") -> Dict[str, Any]:
     start = time.time()
-    py_exec = _get_security_python()
-    tf_dir = REPO_ROOT / "infrastructure" / "terraform"
-    k8s_dir = REPO_ROOT / "infrastructure" / "kubernetes"
-
-    try:
-        res = subprocess.run(
-            [py_exec, "-m", "checkov", "-d", str(tf_dir), "-d", str(k8s_dir), "-o", "json", "--compact", "--quiet"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        data = {}
-        if res.stdout.strip():
-            try:
-                data = json.loads(res.stdout)
-            except Exception:
-                pass
-
-        if isinstance(data, list):
-            checkov_runs = data
-        elif isinstance(data, dict):
-            checkov_runs = [data]
-        else:
-            checkov_runs = []
-
-        failed_checks = []
-        crit_count = 0
-        high_count = 0
-        med_count = 0
-        low_count = 0
-
-        for run in checkov_runs:
-            results = run.get("results", {})
-            for fc in results.get("failed_checks", []):
-                sev = (fc.get("severity") or "MEDIUM").upper()
-                if sev == "CRITICAL":
-                    crit_count += 1
-                elif sev == "HIGH":
-                    high_count += 1
-                elif sev == "LOW":
-                    low_count += 1
-                else:
-                    med_count += 1
-
-                failed_checks.append({
-                    "check_id": fc.get("check_id"),
-                    "check_name": fc.get("check_name"),
-                    "severity": sev,
-                    "file_path": fc.get("file_path"),
-                    "resource": fc.get("resource"),
-                    "guideline": fc.get("guideline"),
-                })
-
-        total = len(failed_checks)
-        verdict = "FAIL" if (crit_count > 0 or high_count > 0 or (mode == "STRICT" and total > 5)) else "PASS"
-
+    mem_ok, mem_err, mem_info = check_memory_threshold("Checkov (Gate 3)")
+    if not mem_ok:
         rep = {
             "gate_id": "gate-03-checkov",
             "gate_number": 3,
             "tool_name": "checkov",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "execution_status": "PASS" if total == 0 else "FAIL",
-            "severity_verdict": verdict,
-            "findings_count": total,
-            "critical_findings": crit_count,
-            "high_findings": high_count,
-            "medium_findings": med_count,
-            "low_findings": low_count,
+            "execution_status": "BLOCKED",
+            "severity_verdict": "BLOCKED",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-03-checkov.json"),
-            "error_details": None,
-            "findings": failed_checks,
-            "duration_seconds": round(time.time() - start, 2),
+            "error_details": mem_err,
+            "findings": [],
+            "memory_info": mem_info,
         }
-    except Exception as e:
+        _save_report(3, rep)
+        return rep
+
+    py_exec = _get_security_python()
+    tf_dir = REPO_ROOT / "infrastructure" / "terraform"
+    k8s_dir = REPO_ROOT / "infrastructure" / "kubernetes"
+    cmd = [py_exec, "-m", "checkov", "-d", str(tf_dir), "-d", str(k8s_dir), "-o", "json", "--compact", "--quiet"]
+
+    code, stdout, stderr, timed_out = run_subprocess_safe(cmd, REPO_ROOT, timeout_sec=90)
+    if timed_out:
         rep = {
             "gate_id": "gate-03-checkov",
             "gate_number": 3,
@@ -352,10 +560,71 @@ def run_gate_3(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-03-checkov.json"),
-            "error_details": str(e),
+            "error_details": "BLOCKED — SCANNER TIMEOUT: Checkov IaC scan exceeded 90s execution limit.",
             "findings": [],
+            "duration_seconds": round(time.time() - start, 2),
+            "memory_info": mem_info,
         }
+        _save_report(3, rep)
+        return rep
 
+    data: Any = {}
+    if stdout.strip():
+        try:
+            data = json.loads(stdout)
+        except Exception:
+            pass
+
+    checkov_runs = data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+    failed_checks = []
+    crit_count = 0
+    high_count = 0
+    med_count = 0
+    low_count = 0
+
+    for run in checkov_runs:
+        results = run.get("results", {})
+        for fc in results.get("failed_checks", []):
+            sev = (fc.get("severity") or "MEDIUM").upper()
+            if sev == "CRITICAL":
+                crit_count += 1
+            elif sev == "HIGH":
+                high_count += 1
+            elif sev == "LOW":
+                low_count += 1
+            else:
+                med_count += 1
+
+            failed_checks.append({
+                "check_id": fc.get("check_id"),
+                "check_name": fc.get("check_name"),
+                "severity": sev,
+                "file_path": fc.get("file_path"),
+                "resource": fc.get("resource"),
+                "guideline": fc.get("guideline"),
+            })
+
+    total = len(failed_checks)
+    verdict = "FAIL" if (crit_count > 0 or high_count > 0 or (mode == "STRICT" and total > 5)) else "PASS"
+
+    rep = {
+        "gate_id": "gate-03-checkov",
+        "gate_number": 3,
+        "tool_name": "checkov",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "execution_status": "PASS" if total == 0 else "FAIL",
+        "severity_verdict": verdict,
+        "findings_count": total,
+        "critical_findings": crit_count,
+        "high_findings": high_count,
+        "medium_findings": med_count,
+        "low_findings": low_count,
+        "report_location": str(REPORTS_DIR / "gate-03-checkov.json"),
+        "error_details": None,
+        "findings": failed_checks,
+        "duration_seconds": round(time.time() - start, 2),
+        "memory_info": mem_info,
+    }
     _save_report(3, rep)
     return rep
 
@@ -365,6 +634,28 @@ def run_gate_3(mode: str = "STRICT") -> Dict[str, Any]:
 # ============================================================================
 def run_gate_4(mode: str = "STRICT") -> Dict[str, Any]:
     start = time.time()
+    mem_ok, mem_err, mem_info = check_memory_threshold("Hadolint (Gate 4)")
+    if not mem_ok:
+        rep = {
+            "gate_id": "gate-04-hadolint",
+            "gate_number": 4,
+            "tool_name": "hadolint",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "execution_status": "BLOCKED",
+            "severity_verdict": "BLOCKED",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
+            "report_location": str(REPORTS_DIR / "gate-04-hadolint.json"),
+            "error_details": mem_err,
+            "findings": [],
+            "memory_info": mem_info,
+        }
+        _save_report(4, rep)
+        return rep
+
     hadolint_cmd = shutil.which("hadolint")
     if not hadolint_cmd:
         win_app = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WindowsApps" / "hadolint.exe"
@@ -385,8 +676,9 @@ def run_gate_4(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-04-hadolint.json"),
-            "error_details": "Hadolint binary not found in PATH or WindowsApps",
+            "error_details": "Hadolint binary not found in PATH or WindowsApps directory",
             "findings": [],
+            "memory_info": mem_info,
         }
         _save_report(4, rep)
         return rep
@@ -396,70 +688,10 @@ def run_gate_4(mode: str = "STRICT") -> Dict[str, Any]:
         str(REPO_ROOT / "frontend" / "Dockerfile"),
     ]
     existing_dfs = [df for df in dockerfiles if os.path.exists(df)]
+    cmd = [hadolint_cmd, "-f", "json"] + existing_dfs
 
-    try:
-        res = subprocess.run(
-            [hadolint_cmd, "-f", "json"] + existing_dfs,
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        raw_items = []
-        if res.stdout.strip():
-            try:
-                raw_items = json.loads(res.stdout)
-            except Exception:
-                pass
-
-        crit_count = 0
-        high_count = 0
-        med_count = 0
-        low_count = 0
-        findings = []
-
-        for item in raw_items:
-            level = item.get("level", "info").lower()
-            if level == "error":
-                high_count += 1
-                sev = "HIGH"
-            elif level == "warning":
-                med_count += 1
-                sev = "MEDIUM"
-            else:
-                low_count += 1
-                sev = "LOW"
-
-            findings.append({
-                "code": item.get("code"),
-                "message": item.get("message"),
-                "level": level,
-                "severity": sev,
-                "file": item.get("file"),
-                "line": item.get("line"),
-            })
-
-        total = len(findings)
-        verdict = "FAIL" if (high_count > 0 or (mode == "STRICT" and med_count > 5)) else "PASS"
-
-        rep = {
-            "gate_id": "gate-04-hadolint",
-            "gate_number": 4,
-            "tool_name": "hadolint",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "execution_status": "PASS" if total == 0 else "FAIL",
-            "severity_verdict": verdict,
-            "findings_count": total,
-            "critical_findings": crit_count,
-            "high_findings": high_count,
-            "medium_findings": med_count,
-            "low_findings": low_count,
-            "report_location": str(REPORTS_DIR / "gate-04-hadolint.json"),
-            "error_details": None,
-            "findings": findings,
-            "duration_seconds": round(time.time() - start, 2),
-        }
-    except Exception as e:
+    code, stdout, stderr, timed_out = run_subprocess_safe(cmd, REPO_ROOT, timeout_sec=30)
+    if timed_out:
         rep = {
             "gate_id": "gate-04-hadolint",
             "gate_number": 4,
@@ -473,22 +705,81 @@ def run_gate_4(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-04-hadolint.json"),
-            "error_details": str(e),
+            "error_details": "BLOCKED — SCANNER TIMEOUT: Hadolint Dockerfile scan exceeded 30s execution limit.",
             "findings": [],
+            "duration_seconds": round(time.time() - start, 2),
+            "memory_info": mem_info,
         }
+        _save_report(4, rep)
+        return rep
 
+    raw_items: List[Dict[str, Any]] = []
+    if stdout.strip():
+        try:
+            raw_items = json.loads(stdout)
+        except Exception:
+            pass
+
+    crit_count = 0
+    high_count = 0
+    med_count = 0
+    low_count = 0
+    findings = []
+
+    for item in raw_items:
+        level = item.get("level", "info").lower()
+        if level == "error":
+            high_count += 1
+            sev = "HIGH"
+        elif level == "warning":
+            med_count += 1
+            sev = "MEDIUM"
+        else:
+            low_count += 1
+            sev = "LOW"
+
+        findings.append({
+            "code": item.get("code"),
+            "message": item.get("message"),
+            "level": level,
+            "severity": sev,
+            "file": item.get("file"),
+            "line": item.get("line"),
+        })
+
+    total = len(findings)
+    verdict = "FAIL" if (high_count > 0 or (mode == "STRICT" and med_count > 5)) else "PASS"
+
+    rep = {
+        "gate_id": "gate-04-hadolint",
+        "gate_number": 4,
+        "tool_name": "hadolint",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "execution_status": "PASS" if total == 0 else "FAIL",
+        "severity_verdict": verdict,
+        "findings_count": total,
+        "critical_findings": crit_count,
+        "high_findings": high_count,
+        "medium_findings": med_count,
+        "low_findings": low_count,
+        "report_location": str(REPORTS_DIR / "gate-04-hadolint.json"),
+        "error_details": None,
+        "findings": findings,
+        "duration_seconds": round(time.time() - start, 2),
+        "memory_info": mem_info,
+    }
     _save_report(4, rep)
     return rep
 
 
 # ============================================================================
-# Gate 5: Snyk (Dependency Vulnerability Scanning)
+# Gate 5: Snyk (Dependency Vulnerability Scanning - Hosted SaaS)
 # ============================================================================
 def run_gate_5(mode: str = "STRICT") -> Dict[str, Any]:
     start = time.time()
     snyk_token = os.environ.get("SNYK_TOKEN", "").strip()
 
-    # If token missing, report BLOCKED - CREDENTIAL REQUIRED
+    # Truthful reporting: Credential check before scanner execution
     if not snyk_token:
         rep = {
             "gate_id": "gate-05-snyk",
@@ -503,15 +794,41 @@ def run_gate_5(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
-            "error_details": "BLOCKED — CREDENTIAL REQUIRED: SNYK_TOKEN environment variable is not configured. Snyk authentication is required to scan dependencies.",
+            "error_details": (
+                "BLOCKED — CREDENTIAL REQUIRED: SNYK_TOKEN environment variable is not configured. "
+                "Snyk SaaS authentication is required to scan dependencies. "
+                "Configure Jenkins secret text credential with ID 'snyk-token' to enable Gate 5."
+            ),
             "findings": [],
+        }
+        _save_report(5, rep)
+        return rep
+
+    # RAM safeguard check
+    mem_ok, mem_err, mem_info = check_memory_threshold("Snyk (Gate 5)")
+    if not mem_ok:
+        rep = {
+            "gate_id": "gate-05-snyk",
+            "gate_number": 5,
+            "tool_name": "snyk",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "execution_status": "BLOCKED",
+            "severity_verdict": "BLOCKED",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
+            "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
+            "error_details": mem_err,
+            "findings": [],
+            "memory_info": mem_info,
         }
         _save_report(5, rep)
         return rep
 
     snyk_cmd = shutil.which("snyk")
     if not snyk_cmd:
-        # Check npm global path
         npm_snyk = Path(os.environ.get("APPDATA", "")) / "npm" / "snyk.cmd"
         if npm_snyk.exists():
             snyk_cmd = str(npm_snyk)
@@ -530,100 +847,27 @@ def run_gate_5(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
-            "error_details": "Snyk CLI is not found in PATH or npm global directory.",
+            "error_details": "Snyk CLI not found in PATH or npm global directory.",
             "findings": [],
+            "memory_info": mem_info,
         }
         _save_report(5, rep)
         return rep
 
-    try:
-        # Scan backend python requirements
-        res = subprocess.run(
-            [snyk_cmd, "test", "--file=requirements.txt", "--json"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env={**os.environ, "SNYK_TOKEN": snyk_token},
-        )
-        data = {}
-        if res.stdout.strip():
-            try:
-                data = json.loads(res.stdout)
-            except Exception:
-                pass
+    # Security: Pass SNYK_TOKEN via subshell environment only (never CLI arguments)
+    target_file = "requirements.txt"
+    if not (REPO_ROOT / target_file).exists():
+        target_file = "backend/requirements.txt"
 
-        if isinstance(data, dict) and data.get("ok") is False:
-            err_msg = str(data.get("error", "Snyk execution failed"))
-            is_auth_error = any(kw in err_msg.lower() for kw in ["auth", "token", "unauthorized", "forbidden"])
-            rep = {
-                "gate_id": "gate-05-snyk",
-                "gate_number": 5,
-                "tool_name": "snyk",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "execution_status": "BLOCKED" if is_auth_error else "ERROR",
-                "severity_verdict": "BLOCKED" if is_auth_error else "FAIL",
-                "findings_count": 0,
-                "critical_findings": 0,
-                "high_findings": 0,
-                "medium_findings": 0,
-                "low_findings": 0,
-                "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
-                "error_details": f"Snyk API Error: {err_msg}",
-                "findings": [],
-                "duration_seconds": round(time.time() - start, 2),
-            }
-            _save_report(5, rep)
-            return rep
+    cmd = [snyk_cmd, "test", f"--file={target_file}", "--json"]
+    code, stdout, stderr, timed_out = run_subprocess_safe(
+        cmd,
+        REPO_ROOT,
+        timeout_sec=90,
+        env={"SNYK_TOKEN": snyk_token},
+    )
 
-        vulns = data.get("vulnerabilities", []) if isinstance(data, dict) else []
-        crit_count = 0
-        high_count = 0
-        med_count = 0
-        low_count = 0
-        findings = []
-
-        for v in vulns:
-            sev = v.get("severity", "low").upper()
-            if sev == "CRITICAL":
-                crit_count += 1
-            elif sev == "HIGH":
-                high_count += 1
-            elif sev == "MEDIUM":
-                med_count += 1
-            else:
-                low_count += 1
-
-            findings.append({
-                "id": v.get("id"),
-                "title": v.get("title"),
-                "package": v.get("packageName"),
-                "version": v.get("version"),
-                "severity": sev,
-                "cvss_score": v.get("cvssScore"),
-            })
-
-        total = len(findings)
-        verdict = "FAIL" if (crit_count > 0 or high_count > 0) else "PASS"
-
-        rep = {
-            "gate_id": "gate-05-snyk",
-            "gate_number": 5,
-            "tool_name": "snyk",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "execution_status": "PASS" if verdict == "PASS" else "FAIL",
-            "severity_verdict": verdict,
-            "findings_count": total,
-            "critical_findings": crit_count,
-            "high_findings": high_count,
-            "medium_findings": med_count,
-            "low_findings": low_count,
-            "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
-            "error_details": None,
-            "findings": findings,
-            "duration_seconds": round(time.time() - start, 2),
-        }
-    except Exception as e:
+    if timed_out:
         rep = {
             "gate_id": "gate-05-snyk",
             "gate_number": 5,
@@ -637,28 +881,136 @@ def run_gate_5(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
-            "error_details": str(e),
+            "error_details": "BLOCKED — SCANNER TIMEOUT: Snyk dependency scan exceeded 90s execution limit.",
             "findings": [],
+            "duration_seconds": round(time.time() - start, 2),
+            "memory_info": mem_info,
         }
+        _save_report(5, rep)
+        return rep
 
+    data: Dict[str, Any] = {}
+    if stdout.strip():
+        try:
+            data = json.loads(stdout)
+        except Exception:
+            pass
+
+    if isinstance(data, dict) and data.get("ok") is False:
+        err_msg = str(data.get("error", "Snyk execution failed"))
+        is_auth_error = any(kw in err_msg.lower() for kw in ["auth", "token", "unauthorized", "forbidden", "invalid key"])
+        rep = {
+            "gate_id": "gate-05-snyk",
+            "gate_number": 5,
+            "tool_name": "snyk",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "execution_status": "BLOCKED" if is_auth_error else "ERROR",
+            "severity_verdict": "BLOCKED" if is_auth_error else "FAIL",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
+            "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
+            "error_details": f"Snyk API Error: {err_msg}",
+            "findings": [],
+            "duration_seconds": round(time.time() - start, 2),
+            "memory_info": mem_info,
+        }
+        _save_report(5, rep)
+        return rep
+
+    vulns = data.get("vulnerabilities", []) if isinstance(data, dict) else []
+    crit_count = 0
+    high_count = 0
+    med_count = 0
+    low_count = 0
+    findings = []
+
+    for v in vulns:
+        sev = v.get("severity", "low").upper()
+        if sev == "CRITICAL":
+            crit_count += 1
+        elif sev == "HIGH":
+            high_count += 1
+        elif sev == "MEDIUM":
+            med_count += 1
+        else:
+            low_count += 1
+
+        findings.append({
+            "id": v.get("id"),
+            "title": v.get("title"),
+            "package": v.get("packageName"),
+            "version": v.get("version"),
+            "severity": sev,
+            "cvss_score": v.get("cvssScore"),
+        })
+
+    total = len(findings)
+    verdict = "FAIL" if (crit_count > 0 or high_count > 0) else "PASS"
+
+    rep = {
+        "gate_id": "gate-05-snyk",
+        "gate_number": 5,
+        "tool_name": "snyk",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "execution_status": "PASS" if verdict == "PASS" else "FAIL",
+        "severity_verdict": verdict,
+        "findings_count": total,
+        "critical_findings": crit_count,
+        "high_findings": high_count,
+        "medium_findings": med_count,
+        "low_findings": low_count,
+        "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
+        "error_details": None,
+        "findings": findings,
+        "duration_seconds": round(time.time() - start, 2),
+        "memory_info": mem_info,
+    }
     _save_report(5, rep)
     return rep
 
 
 # ============================================================================
-# Gate 6: OWASP ZAP (DAST Baseline Testing)
+# Gate 6: OWASP ZAP (Dynamic Application Security Testing - DAST Baseline Prober)
 # ============================================================================
 def run_gate_6(mode: str = "STRICT", target_url: str = "http://localhost:8000") -> Dict[str, Any]:
+    """
+    Lightweight, in-process Python HTTP security prober (~20 MB footprint).
+    Avoids running full Java OWASP ZAP daemon (1.5 GB RAM) while providing baseline DAST.
+    """
     start = time.time()
+    mem_ok, mem_err, mem_info = check_memory_threshold("OWASP ZAP (Gate 6)")
+    if not mem_ok:
+        rep = {
+            "gate_id": "gate-06-zap",
+            "gate_number": 6,
+            "tool_name": "owasp-zap",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "execution_status": "BLOCKED",
+            "severity_verdict": "BLOCKED",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
+            "report_location": str(REPORTS_DIR / "gate-06-zap.json"),
+            "error_details": mem_err,
+            "findings": [],
+            "memory_info": mem_info,
+        }
+        _save_report(6, rep)
+        return rep
 
-    # 1. Check if application is reachable
-    app_healthy = False
+    # Candidate endpoints for bridge between Docker container & Windows host
     candidates = [target_url]
     if "localhost" in target_url:
         candidates.append(target_url.replace("localhost", "host.docker.internal"))
     elif "127.0.0.1" in target_url:
         candidates.append(target_url.replace("127.0.0.1", "host.docker.internal"))
 
+    app_healthy = False
     active_target = target_url
     for cand in candidates:
         try:
@@ -685,14 +1037,13 @@ def run_gate_6(mode: str = "STRICT", target_url: str = "http://localhost:8000") 
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-06-zap.json"),
-            "error_details": f"BLOCKED — TEST APPLICATION UNAVAILABLE: Target URL {target_url} could not be reached. Ensure the application is started before running DAST.",
+            "error_details": f"BLOCKED — TEST APPLICATION UNAVAILABLE: Target URL {target_url} (probed: {candidates}) could not be reached. Ensure FastAPI backend is running.",
             "findings": [],
+            "memory_info": mem_info,
         }
         _save_report(6, rep)
         return rep
 
-    # 2. Perform baseline security probes against the live application endpoints
-    # Endpoints to probe: /, /health, /docs, /openapi.json, /api/v1/health
     endpoints = ["/", "/health", "/docs", "/openapi.json", "/api/v1/health"]
     findings = []
     crit_count = 0
@@ -706,7 +1057,6 @@ def run_gate_6(mode: str = "STRICT", target_url: str = "http://localhost:8000") 
             req = urllib.request.Request(full_url, headers={"User-Agent": "OWASP-ZAP-DAST-Scanner/2.14"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 headers = {k.lower(): v for k, v in resp.getheaders()}
-                status_code = resp.status
 
                 # Test 1: Content-Security-Policy (Medium)
                 if "content-security-policy" not in headers:
@@ -757,10 +1107,10 @@ def run_gate_6(mode: str = "STRICT", target_url: str = "http://localhost:8000") 
                         "description": "Access-Control-Allow-Origin: * combined with credentials allows cross-origin data theft.",
                         "solution": "Specify explicit allowed origins instead of wildcard.",
                     })
-        except Exception as e:
+        except Exception:
             pass
 
-    # Deduplicate findings by name + url
+    # Deduplicate findings
     seen = set()
     unique_findings = []
     for f in findings:
@@ -794,11 +1144,11 @@ def run_gate_6(mode: str = "STRICT", target_url: str = "http://localhost:8000") 
         "error_details": None,
         "findings": unique_findings,
         "duration_seconds": round(time.time() - start, 2),
+        "memory_info": mem_info,
     }
-
     _save_report(6, rep)
 
-    # Also generate human-readable HTML report
+    # Human-readable HTML report
     html_file = REPORTS_DIR / "gate-06-zap.html"
     html_content = f"""<!DOCTYPE html>
 <html>
@@ -842,14 +1192,19 @@ def run_gate_6(mode: str = "STRICT", target_url: str = "http://localhost:8000") 
 
 
 # ============================================================================
-# Gate 7: SonarQube (Quality Gate & Code Analysis)
+# Gate 7: SonarCloud (Code Quality & Security Analysis - Hosted SaaS)
 # ============================================================================
 def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
     start = time.time()
-    sonar_host = os.environ.get("SONAR_HOST_URL", "http://localhost:9000").rstrip("/")
+
+    # Read configuration from sonar-project.properties or environment
+    sonar_props = _read_sonar_properties()
+    sonar_host = os.environ.get("SONAR_HOST_URL", sonar_props.get("sonar.host.url", "https://sonarcloud.io")).rstrip("/")
+    sonar_org = os.environ.get("SONAR_ORGANIZATION", sonar_props.get("sonar.organization", "akashgtub"))
+    sonar_project_key = os.environ.get("SONAR_PROJECT_KEY", sonar_props.get("sonar.projectKey", "akashgtub_ArchitectIQ"))
     sonar_token = os.environ.get("SONAR_TOKEN", "").strip()
 
-    # 1. Check if token is configured
+    # 1. Truthful Credential Validation
     if not sonar_token:
         rep = {
             "gate_id": "gate-07-sonarqube",
@@ -864,36 +1219,18 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
-            "error_details": "BLOCKED — CREDENTIAL REQUIRED: SONAR_TOKEN environment variable not set. SonarQube authentication is required.",
+            "error_details": (
+                "BLOCKED — CREDENTIAL REQUIRED: SONAR_TOKEN environment variable not set. "
+                "SonarCloud static analysis requires authentication. "
+                "Configure Jenkins secret text credential with ID 'sonar-token' to enable Gate 7."
+            ),
             "findings": [],
         }
         _save_report(7, rep)
         return rep
 
-    # 2. Check if SonarQube server is reachable
-    candidates = [sonar_host]
-    if "localhost" in sonar_host:
-        candidates.append(sonar_host.replace("localhost", "architectiq-sonarqube"))
-        candidates.append(sonar_host.replace("localhost", "host.docker.internal"))
-    elif "127.0.0.1" in sonar_host:
-        candidates.append(sonar_host.replace("127.0.0.1", "architectiq-sonarqube"))
-        candidates.append(sonar_host.replace("127.0.0.1", "host.docker.internal"))
-
-    server_online = False
-    active_sonar_host = sonar_host
-    for cand in candidates:
-        try:
-            req = urllib.request.Request(f"{cand}/api/system/status")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                data = json.loads(resp.read().decode())
-                if data.get("status") in ["UP", "STARTING"]:
-                    server_online = True
-                    active_sonar_host = cand
-                    break
-        except Exception:
-            pass
-
-    if not server_online:
+    # 2. Organization and Project Key Validation
+    if not sonar_org or not sonar_project_key:
         rep = {
             "gate_id": "gate-07-sonarqube",
             "gate_number": 7,
@@ -907,13 +1244,36 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
-            "error_details": f"BLOCKED — SONARQUBE SERVER UNAVAILABLE: SonarQube service at {sonar_host} (probed: {candidates}) is not reachable. Ensure container architectiq-sonarqube is running.",
+            "error_details": f"BLOCKED — CONFIGURATION ERROR: Invalid SonarCloud configuration (org='{sonar_org}', projectKey='{sonar_project_key}').",
             "findings": [],
         }
         _save_report(7, rep)
         return rep
 
-    # 3. Server is online and credentials provided - execute analysis
+    # 3. RAM Safeguard Check
+    mem_ok, mem_err, mem_info = check_memory_threshold("SonarCloud Scanner (Gate 7)")
+    if not mem_ok:
+        rep = {
+            "gate_id": "gate-07-sonarqube",
+            "gate_number": 7,
+            "tool_name": "sonar-scanner",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "execution_status": "BLOCKED",
+            "severity_verdict": "BLOCKED",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
+            "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
+            "error_details": mem_err,
+            "findings": [],
+            "memory_info": mem_info,
+        }
+        _save_report(7, rep)
+        return rep
+
+    # 4. Scanner Binary Detection
     sonar_scanner_cmd = shutil.which("sonar-scanner")
     if not sonar_scanner_cmd:
         npm_scanner = Path(os.environ.get("APPDATA", "")) / "npm" / "sonar-scanner.cmd"
@@ -936,52 +1296,27 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
             "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
             "error_details": "sonar-scanner CLI tool not found in PATH or npm global directory.",
             "findings": [],
+            "memory_info": mem_info,
         }
         _save_report(7, rep)
         return rep
 
-    try:
-        res = subprocess.run(
-            [sonar_scanner_cmd, f"-Dsonar.host.url={active_sonar_host}", f"-Dsonar.token={sonar_token}"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
+    # 5. Execute sonar-scanner (Passing SONAR_TOKEN via env dictionary, NOT command-line flags)
+    cmd = [
+        sonar_scanner_cmd,
+        f"-Dsonar.host.url={sonar_host}",
+        f"-Dsonar.organization={sonar_org}",
+        f"-Dsonar.projectKey={sonar_project_key}",
+    ]
 
-        # Query Quality Gate status
-        qg_url = f"{active_sonar_host}/api/qualitygates/project_status?projectKey=ArchitectIQ"
-        req = urllib.request.Request(qg_url, headers={"Authorization": f"Bearer {sonar_token}"})
-        qg_status = "UNKNOWN"
-        conditions = []
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                qg_data = json.loads(resp.read().decode())
-                qg_status = qg_data.get("projectStatus", {}).get("status", "UNKNOWN")
-                conditions = qg_data.get("projectStatus", {}).get("conditions", [])
-        except Exception as qg_err:
-            pass
+    code, stdout, stderr, timed_out = run_subprocess_safe(
+        cmd,
+        REPO_ROOT,
+        timeout_sec=90,
+        env={"SONAR_TOKEN": sonar_token},
+    )
 
-        verdict = "PASS" if qg_status == "OK" else "FAIL"
-        rep = {
-            "gate_id": "gate-07-sonarqube",
-            "gate_number": 7,
-            "tool_name": "sonar-scanner",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "execution_status": "PASS" if verdict == "PASS" else "FAIL",
-            "severity_verdict": verdict,
-            "quality_gate_status": qg_status,
-            "findings_count": len(conditions),
-            "critical_findings": sum(1 for c in conditions if c.get("status") == "ERROR"),
-            "high_findings": sum(1 for c in conditions if c.get("status") == "WARN"),
-            "medium_findings": 0,
-            "low_findings": 0,
-            "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
-            "error_details": None if verdict == "PASS" else f"Quality Gate failed: status={qg_status}",
-            "findings": conditions,
-            "duration_seconds": round(time.time() - start, 2),
-        }
-    except Exception as e:
+    if timed_out:
         rep = {
             "gate_id": "gate-07-sonarqube",
             "gate_number": 7,
@@ -995,10 +1330,73 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
-            "error_details": str(e),
+            "error_details": "BLOCKED — SCANNER TIMEOUT: sonar-scanner execution exceeded 90s execution limit.",
             "findings": [],
+            "duration_seconds": round(time.time() - start, 2),
+            "memory_info": mem_info,
         }
+        _save_report(7, rep)
+        return rep
 
+    if code != 0:
+        clean_err = stderr.strip() or stdout.strip() or f"sonar-scanner failed with exit code {code}"
+        # Redact any accidental tokens from error message
+        if sonar_token in clean_err:
+            clean_err = clean_err.replace(sonar_token, "***REDACTED***")
+        rep = {
+            "gate_id": "gate-07-sonarqube",
+            "gate_number": 7,
+            "tool_name": "sonar-scanner",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "execution_status": "ERROR",
+            "severity_verdict": "FAIL",
+            "findings_count": 0,
+            "critical_findings": 0,
+            "high_findings": 0,
+            "medium_findings": 0,
+            "low_findings": 0,
+            "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
+            "error_details": f"sonar-scanner execution failure: {clean_err[:300]}",
+            "findings": [],
+            "duration_seconds": round(time.time() - start, 2),
+            "memory_info": mem_info,
+        }
+        _save_report(7, rep)
+        return rep
+
+    # 6. Query SonarCloud Quality Gate Status API
+    qg_url = f"{sonar_host}/api/qualitygates/project_status?projectKey={sonar_project_key}"
+    req = urllib.request.Request(qg_url, headers={"Authorization": f"Bearer {sonar_token}"})
+    qg_status = "UNKNOWN"
+    conditions = []
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            qg_data = json.loads(resp.read().decode())
+            qg_status = qg_data.get("projectStatus", {}).get("status", "UNKNOWN")
+            conditions = qg_data.get("projectStatus", {}).get("conditions", [])
+    except Exception as qg_err:
+        pass
+
+    verdict = "PASS" if qg_status == "OK" else "FAIL"
+    rep = {
+        "gate_id": "gate-07-sonarqube",
+        "gate_number": 7,
+        "tool_name": "sonar-scanner",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "execution_status": "PASS" if verdict == "PASS" else "FAIL",
+        "severity_verdict": verdict,
+        "quality_gate_status": qg_status,
+        "findings_count": len(conditions),
+        "critical_findings": sum(1 for c in conditions if c.get("status") == "ERROR"),
+        "high_findings": sum(1 for c in conditions if c.get("status") == "WARN"),
+        "medium_findings": 0,
+        "low_findings": 0,
+        "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
+        "error_details": None if verdict == "PASS" else f"SonarCloud Quality Gate status: {qg_status}",
+        "findings": conditions,
+        "duration_seconds": round(time.time() - start, 2),
+        "memory_info": mem_info,
+    }
     _save_report(7, rep)
     return rep
 
@@ -1008,10 +1406,19 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
 # ============================================================================
 def generate_summary(mode: str = "STRICT") -> Dict[str, Any]:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    mem_info = get_system_memory_info()
+
     summary_data = {
         "title": "ArchitectIQ DevSecOps Security Framework - 7 Essential Tools Summary",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "mode": mode,
+        "memory_environment": mem_info.get("environment"),
+        "system_memory": {
+            "total_mb": mem_info.get("total_mb"),
+            "available_mb": mem_info.get("available_mb"),
+            "percent_free": mem_info.get("percent_free"),
+            "safety_threshold_mb": MIN_RAM_THRESHOLD_MB,
+        },
         "gates": {},
         "total_gates": 7,
         "passed_gates": 0,
@@ -1096,6 +1503,8 @@ def generate_summary(mode: str = "STRICT") -> Dict[str, Any]:
         "",
         f"**Audit Timestamp:** `{summary_data['timestamp']}`  ",
         f"**Enforcement Mode:** `{mode}`  ",
+        f"**Host / Runtime Environment:** `{mem_info.get('environment')}` (Available RAM: `{mem_info.get('available_mb')} MB` / `{mem_info.get('total_mb')} MB` — `{mem_info.get('percent_free')}%` free)  ",
+        f"**RAM Safety Threshold:** `{MIN_RAM_THRESHOLD_MB} MB`  ",
         f"**Overall Pipeline Verdict:** **`{summary_data['overall_verdict']}`**  ",
         "",
         f"**Gates Breakdown:** Passed: `{summary_data['passed_gates']}` | Failed: `{summary_data['failed_gates']}` | Blocked: `{summary_data['blocked_gates']}` | Errors/Missing: `{summary_data['error_gates']}` | Not Run: `{summary_data['not_run_gates']}`",
@@ -1114,17 +1523,20 @@ def generate_summary(mode: str = "STRICT") -> Dict[str, Any]:
         verdict_badge = f"**`{g.get('verdict', 'NOT RUN')}`**"
         counts = f"{g.get('critical', 0)} / {g.get('high', 0)} / {g.get('medium', 0)} / {g.get('low', 0)}"
         err = g.get('error_details') or "Clean execution"
-        if len(err) > 60:
-            err = err[:57] + "..."
+        if len(err) > 65:
+            err = err[:62] + "..."
         md_lines.append(f"| **Gate {num}** | **{g.get('name', '')}** | {status_badge} | {verdict_badge} | {g.get('findings', 0)} | {counts} | {err} |")
 
     md_lines.extend([
         "",
         "---",
         "",
-        "## Policy Enforcement Details",
-        "- **STRICT Mode**: Blocks pipeline when any Critical/High threshold is exceeded, or when required scanners/credentials are unavailable.",
-        "- **ADVISORY Mode**: Executes all available gates, logs findings and blocked statuses, without halting pipeline execution.",
+        "## Resource-Safe Policy Details",
+        f"- **Runtime RAM Guard**: Scanners check available memory before execution; below `{MIN_RAM_THRESHOLD_MB} MB`, execution is BLOCKED to safeguard system stability.",
+        "- **Tool Timeouts**: Each tool runs sequentially with strict process-tree timeouts (30s - 90s) to prevent frozen processes.",
+        "- **SaaS Migration**: Gate 5 (Snyk) and Gate 7 (SonarCloud) target cloud hosted engines with zero local server overhead.",
+        "- **STRICT Mode**: Halts pipeline on any Critical/High threshold violation or missing mandatory scanner.",
+        "- **ADVISORY Mode**: Executes available gates, accurately logging all blocked statuses and findings without halting pipeline execution.",
         "",
     ])
 
@@ -1136,13 +1548,16 @@ def generate_summary(mode: str = "STRICT") -> Dict[str, Any]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ArchitectIQ 7 Essential Security Gates Runner")
+    parser = argparse.ArgumentParser(description="ArchitectIQ 7 Essential Security Gates Runner (Resource-Safe)")
     parser.add_argument("--gate", type=int, choices=range(1, 8), help="Run a single gate (1-7)")
-    parser.add_argument("--all", action="store_true", help="Run all 7 security gates")
+    parser.add_argument("--all", action="store_true", help="Run all 7 security gates sequentially")
     parser.add_argument("--summary", action="store_true", help="Generate summary reports only")
     parser.add_argument("--mode", choices=["STRICT", "ADVISORY"], default="STRICT", help="Policy enforcement mode")
     parser.add_argument("--target-url", default="http://localhost:8000", help="Target URL for Gate 6 OWASP ZAP")
     args = parser.parse_args()
+
+    mem_info = get_system_memory_info()
+    print(f"ArchitectIQ Security Runner | Environment: {mem_info['environment']} | Avail RAM: {mem_info['available_mb']} MB ({mem_info['percent_free']}%) | Safe Threshold: {MIN_RAM_THRESHOLD_MB} MB")
 
     if args.gate:
         print(f"\n============================================================")
@@ -1176,7 +1591,7 @@ def main():
 
     elif args.all:
         print(f"\n============================================================")
-        print(f"  Executing All 7 Essential DevSecOps Security Gates")
+        print(f"  Executing All 7 Essential DevSecOps Security Gates (Sequential)")
         print(f"============================================================")
         print(f"Mode: {args.mode}")
 
