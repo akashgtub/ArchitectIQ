@@ -56,7 +56,7 @@ def store = Jenkins.instance.getExtensionList('com.cloudbees.plugins.credentials
 
 void upsert(store, domain, id, desc, secretVal) {
     if (!secretVal || secretVal.trim().isEmpty()) {
-        println "[SKIP] Credential '\${id}' value was not provided."
+        println "[SKIP] Credential '" + id + "' value was not provided."
         return
     }
     def existing = store.getCredentials(domain).find { it.id == id }
@@ -70,7 +70,7 @@ void upsert(store, domain, id, desc, secretVal) {
         Secret.fromString(secretVal.trim())
     )
     store.addCredentials(domain, cred)
-    println "[SUCCESS] Credential '\${id}' successfully registered in Jenkins."
+    println "[SUCCESS] Credential '" + id + "' successfully registered in Jenkins."
 }
 
 upsert(store, domain, 'snyk-token', 'Snyk API Token for DevSecOps Dependency Scanning', '$SnykToken')
@@ -89,3 +89,4 @@ try {
     Write-Host "[ERROR] Failed to execute credential configuration: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
+
