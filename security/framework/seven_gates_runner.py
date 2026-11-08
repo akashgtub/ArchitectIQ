@@ -553,6 +553,29 @@ def run_gate_5(mode: str = "STRICT") -> Dict[str, Any]:
             except Exception:
                 pass
 
+        if isinstance(data, dict) and data.get("ok") is False:
+            err_msg = str(data.get("error", "Snyk execution failed"))
+            is_auth_error = any(kw in err_msg.lower() for kw in ["auth", "token", "unauthorized", "forbidden"])
+            rep = {
+                "gate_id": "gate-05-snyk",
+                "gate_number": 5,
+                "tool_name": "snyk",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "execution_status": "BLOCKED" if is_auth_error else "ERROR",
+                "severity_verdict": "BLOCKED" if is_auth_error else "FAIL",
+                "findings_count": 0,
+                "critical_findings": 0,
+                "high_findings": 0,
+                "medium_findings": 0,
+                "low_findings": 0,
+                "report_location": str(REPORTS_DIR / "gate-05-snyk.json"),
+                "error_details": f"Snyk API Error: {err_msg}",
+                "findings": [],
+                "duration_seconds": round(time.time() - start, 2),
+            }
+            _save_report(5, rep)
+            return rep
+
         vulns = data.get("vulnerabilities", []) if isinstance(data, dict) else []
         crit_count = 0
         high_count = 0
@@ -848,15 +871,27 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
         return rep
 
     # 2. Check if SonarQube server is reachable
+    candidates = [sonar_host]
+    if "localhost" in sonar_host:
+        candidates.append(sonar_host.replace("localhost", "architectiq-sonarqube"))
+        candidates.append(sonar_host.replace("localhost", "host.docker.internal"))
+    elif "127.0.0.1" in sonar_host:
+        candidates.append(sonar_host.replace("127.0.0.1", "architectiq-sonarqube"))
+        candidates.append(sonar_host.replace("127.0.0.1", "host.docker.internal"))
+
     server_online = False
-    try:
-        req = urllib.request.Request(f"{sonar_host}/api/system/status")
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read().decode())
-            if data.get("status") in ["UP", "STARTING"]:
-                server_online = True
-    except Exception:
-        pass
+    active_sonar_host = sonar_host
+    for cand in candidates:
+        try:
+            req = urllib.request.Request(f"{cand}/api/system/status")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                if data.get("status") in ["UP", "STARTING"]:
+                    server_online = True
+                    active_sonar_host = cand
+                    break
+        except Exception:
+            pass
 
     if not server_online:
         rep = {
@@ -872,7 +907,7 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
             "medium_findings": 0,
             "low_findings": 0,
             "report_location": str(REPORTS_DIR / "gate-07-sonarqube.json"),
-            "error_details": f"BLOCKED — SONARQUBE SERVER UNAVAILABLE: SonarQube service at {sonar_host} is not reachable. (Requires ~2.5GB RAM; host currently has ~0.74GB free physical RAM).",
+            "error_details": f"BLOCKED — SONARQUBE SERVER UNAVAILABLE: SonarQube service at {sonar_host} (probed: {candidates}) is not reachable. Ensure container architectiq-sonarqube is running.",
             "findings": [],
         }
         _save_report(7, rep)
@@ -907,7 +942,7 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
 
     try:
         res = subprocess.run(
-            [sonar_scanner_cmd, f"-Dsonar.host.url={sonar_host}", f"-Dsonar.token={sonar_token}"],
+            [sonar_scanner_cmd, f"-Dsonar.host.url={active_sonar_host}", f"-Dsonar.token={sonar_token}"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -915,7 +950,7 @@ def run_gate_7(mode: str = "STRICT") -> Dict[str, Any]:
         )
 
         # Query Quality Gate status
-        qg_url = f"{sonar_host}/api/qualitygates/project_status?projectKey=ArchitectIQ"
+        qg_url = f"{active_sonar_host}/api/qualitygates/project_status?projectKey=ArchitectIQ"
         req = urllib.request.Request(qg_url, headers={"Authorization": f"Bearer {sonar_token}"})
         qg_status = "UNKNOWN"
         conditions = []
