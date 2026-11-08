@@ -1,0 +1,13 @@
+---
+# ArchitectIQ - Master Playbook
+- name: ArchitectIQ Environment Provisioning and Deployment Automation
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: environment_setup
+    - role: container_runtime
+    - role: kubernetes_readiness
+    - role: app_configuration
+    - role: monitoring_setup
+    - role: deployment_support
+

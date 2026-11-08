@@ -1,0 +1,18 @@
+---
+# Role: kubernetes_readiness
+# Checks Kubernetes cluster context and confirms target namespace readiness
+
+- name: Announce Kubernetes readiness check
+  ansible.builtin.debug:
+    msg: "Checking Kubernetes connectivity for namespace '{{ k8s_namespace }}' using context '{{ k8s_context }}'"
+
+- name: Validate kubeconfig existence
+  ansible.builtin.stat:
+    path: "{{ ansible_env.HOME }}/.kube/config"
+  register: kubeconfig_check
+  when: ansible_env.HOME is defined
+
+- name: Report kubeconfig validation result
+  ansible.builtin.debug:
+    msg: "Kubeconfig located: {{ kubeconfig_check.stat.exists if kubeconfig_check is defined else 'Environment standard' }}"
+

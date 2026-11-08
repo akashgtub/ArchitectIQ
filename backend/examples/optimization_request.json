@@ -1,0 +1,88 @@
+{
+  "architecture": {
+    "components": [
+      {
+        "id": "lb-1",
+        "type": "load_balancer",
+        "name": "Public Ingress LB",
+        "capacity_rps": 2000.0,
+        "replicas": 1,
+        "base_latency_ms": 1.5,
+        "cost_per_month_usd": 25.0
+      },
+      {
+        "id": "api-1",
+        "type": "api_server",
+        "name": "App Backend API",
+        "capacity_rps": 400.0,
+        "replicas": 2,
+        "base_latency_ms": 12.0,
+        "cost_per_month_usd": 40.0
+      },
+      {
+        "id": "cache-1",
+        "type": "cache",
+        "name": "Redis Cluster",
+        "capacity_rps": 2500.0,
+        "replicas": 1,
+        "base_latency_ms": 2.0,
+        "cache_hit_ratio": 0.8,
+        "cost_per_month_usd": 60.0
+      },
+      {
+        "id": "db-1",
+        "type": "database",
+        "name": "Primary Database",
+        "capacity_rps": 600.0,
+        "replicas": 1,
+        "base_latency_ms": 25.0,
+        "cost_per_month_usd": 150.0
+      }
+    ],
+    "connections": [
+      {
+        "source": "lb-1",
+        "target": "api-1",
+        "protocol": "http",
+        "latency_overhead_ms": 1.0,
+        "path_type": "both"
+      },
+      {
+        "source": "api-1",
+        "target": "cache-1",
+        "protocol": "redis",
+        "latency_overhead_ms": 0.5,
+        "path_type": "read"
+      },
+      {
+        "source": "api-1",
+        "target": "db-1",
+        "protocol": "sql",
+        "latency_overhead_ms": 1.5,
+        "path_type": "write"
+      },
+      {
+        "source": "cache-1",
+        "target": "db-1",
+        "protocol": "sql",
+        "latency_overhead_ms": 1.0,
+        "path_type": "read"
+      }
+    ]
+  },
+  "workload": {
+    "requests_per_second": 750.0,
+    "read_ratio": 0.8,
+    "duration_seconds": 30.0,
+    "pattern": "constant",
+    "seed": 42
+  },
+  "constraints": {
+    "max_p95_latency_ms": 180.0,
+    "monthly_budget_usd": 500.0,
+    "min_throughput_rps": 700.0,
+    "max_error_rate": 0.05
+  },
+  "objective": "balanced",
+  "max_candidates": 8
+}

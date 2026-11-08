@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: architectiq
+    runtime: python
+    branch: feature/simulation-engine
+    buildCommand: bash build.sh
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: AI_PROVIDER
+        value: auto
+      - key: ALLOW_AI_FALLBACK
+        value: "true"
+      - key: VISION_AI_PROVIDER
+        value: gemini
+      - key: TEXT_AI_PROVIDER
+        value: huggingface
+      - key: HF_MODEL
+        value: google/gemma-2-27b-it
+      - key: HF_BASE_URL
+        value: https://router.huggingface.co/v1
+      - key: GEMINI_MODEL_ID
+        value: gemini-flash-latest
+      - key: USE_MOCK_SIMULATOR
+        value: "false"
+      - key: SIMULATOR_TIMEOUT_SECONDS
+        value: "30"
+      - key: MAX_DIAGNOSTIC_EXPERIMENTS
+        value: "3"
+      - key: INVESTIGATION_TIMEOUT_SECONDS
+        value: "60"
+      - key: MAX_MODEL_CALLS
+        value: "5"
+      - key: CORS_ORIGINS
+        value: "*"
+      # Secret credentials - configure securely via Render Dashboard Environment settings
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: GEMMA_API_KEY
+        sync: false
+      - key: GEMMA_BASE_URL
+        sync: false
+      - key: SIMULATOR_BASE_URL
+        sync: false

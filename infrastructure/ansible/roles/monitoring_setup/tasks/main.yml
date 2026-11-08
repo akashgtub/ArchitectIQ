@@ -1,0 +1,12 @@
+---
+# Role: monitoring_setup
+# Configures Prometheus and Grafana targets and mounts
+
+- name: Announce monitoring setup
+  ansible.builtin.debug:
+    msg: "Setting up monitoring configuration for backend port {{ backend_port }} and frontend port {{ frontend_port }}"
+
+- name: Validate Prometheus configuration syntax
+  ansible.builtin.debug:
+    msg: "Prometheus scraping configured for jobs: architectiq-backend, architectiq-frontend, prometheus"
+

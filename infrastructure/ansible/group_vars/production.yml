@@ -1,0 +1,9 @@
+---
+# Production Environment Variables
+environment_name: production
+k8s_namespace: architectiq
+backend_replicas: 2
+frontend_replicas: 2
+log_level: INFO
+enable_verbose_monitoring: false
+

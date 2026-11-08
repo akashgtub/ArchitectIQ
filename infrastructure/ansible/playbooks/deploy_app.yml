@@ -1,0 +1,9 @@
+---
+# ArchitectIQ - Application Configuration & Deployment Playbook
+- name: Configure and Deploy ArchitectIQ Application
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: app_configuration
+    - role: deployment_support
+

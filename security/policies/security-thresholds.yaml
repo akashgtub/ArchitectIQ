@@ -1,0 +1,137 @@
+version: "1.0"
+description: "ArchitectIQ DevSecOps Quality Gate Policy Thresholds"
+
+enforcement_modes:
+  STRICT:
+    max_critical: 0
+    max_high: 0
+    max_medium: 10
+    max_low: 50
+    block_on_scanner_error: true
+    block_on_missing_scanner: true
+    block_on_missing_credentials: true
+
+  ADVISORY:
+    max_critical: 999
+    max_high: 999
+    max_medium: 999
+    max_low: 999
+    block_on_scanner_error: false
+    block_on_missing_scanner: false
+    block_on_missing_credentials: false
+
+gates:
+  1:
+    id: "gate-01-trufflehog"
+    name: "TruffleHog — Secret Detection"
+    tool: "trufflehog"
+    category: "secrets"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+
+  2:
+    id: "gate-02-hadolint"
+    name: "Hadolint — Dockerfile Security Linting"
+    tool: "hadolint"
+    category: "container_lint"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+
+  3:
+    id: "gate-03-checkov"
+    name: "Checkov — Infrastructure as Code Security"
+    tool: "checkov"
+    category: "iac_security"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+
+  4:
+    id: "gate-04-terrasecure"
+    name: "TerraSecure — Custom ML-Powered IaC Security"
+    tool: "terrasecure"
+    category: "iac_ml"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: false
+    required: false
+    status: "PREREQUISITE_PENDING"
+
+  5:
+    id: "gate-05-bandit"
+    name: "Bandit — Python SAST"
+    tool: "bandit"
+    category: "sast_backend"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+
+  6:
+    id: "gate-06-eslint-security"
+    name: "ESLint Security — Frontend SAST"
+    tool: "eslint-plugin-security"
+    category: "sast_frontend"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+
+  7:
+    id: "gate-07-sonarqube"
+    name: "SonarQube — Code Quality and Quality Gate"
+    tool: "sonar-scanner"
+    category: "code_quality"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: false
+    required: false
+    status: "PREREQUISITE_PENDING"
+
+  8:
+    id: "gate-08-snyk"
+    name: "Snyk — Dependency Vulnerability Scanning"
+    tool: "snyk"
+    category: "sca"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: false
+    required: false
+    status: "PREREQUISITE_PENDING"
+
+  9:
+    id: "gate-09-syft"
+    name: "Syft — Software Bill of Materials"
+    tool: "syft"
+    category: "sbom"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+
+  10:
+    id: "gate-10-owasp-zap"
+    name: "OWASP ZAP — Dynamic Application Security Testing"
+    tool: "owasp-zap"
+    category: "dast"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+
+  11:
+    id: "gate-11-opa"
+    name: "OPA — Policy as Code"
+    tool: "opa"
+    category: "policy_as_code"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+
+  12:
+    id: "gate-12-vault-check"
+    name: "Vault Check — Secrets Management Validation"
+    tool: "vault-check"
+    category: "secrets_validation"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+

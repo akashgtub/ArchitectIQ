@@ -1,0 +1,22 @@
+---
+# Role: environment_setup
+# Ensures base deployment directories and environment prerequisite files exist idempotently
+
+- name: Display current deployment target
+  ansible.builtin.debug:
+    msg: "Preparing environment '{{ environment_name }}' for {{ app_name }} (v{{ app_version }})"
+
+- name: Ensure target configuration directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /etc/architectiq
+    - /var/log/architectiq
+  when: ansible_os_family != "Windows"
+
+- name: Verify Python runtime availability
+  ansible.builtin.debug:
+    msg: "Target Python runtime interpreter: {{ ansible_python_interpreter | default('system default') }}"
+

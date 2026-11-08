@@ -1,0 +1,93 @@
+version: "1.0"
+description: "ArchitectIQ DevSecOps Security Framework Policy Thresholds (7 Essential Tools)"
+
+enforcement_modes:
+  STRICT:
+    max_critical: 0
+    max_high: 0
+    max_medium: 10
+    max_low: 50
+    block_on_scanner_error: true
+    block_on_missing_scanner: true
+    block_on_missing_credentials: true
+
+  ADVISORY:
+    max_critical: 999
+    max_high: 999
+    max_medium: 999
+    max_low: 999
+    block_on_scanner_error: false
+    block_on_missing_scanner: false
+    block_on_missing_credentials: false
+
+gates:
+  1:
+    id: "gate-01-trufflehog"
+    name: "TruffleHog — Secret Detection"
+    tool: "trufflehog"
+    category: "secrets"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+    report_file: "reports/security/gate-01-trufflehog.json"
+
+  2:
+    id: "gate-02-bandit"
+    name: "Bandit — Python SAST"
+    tool: "bandit"
+    category: "sast"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+    report_file: "reports/security/gate-02-bandit.json"
+
+  3:
+    id: "gate-03-checkov"
+    name: "Checkov — Infrastructure as Code Security"
+    tool: "checkov"
+    category: "iac_security"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+    report_file: "reports/security/gate-03-checkov.json"
+
+  4:
+    id: "gate-04-hadolint"
+    name: "Hadolint — Dockerfile Security Linting"
+    tool: "hadolint"
+    category: "container_lint"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+    report_file: "reports/security/gate-04-hadolint.json"
+
+  5:
+    id: "gate-05-snyk"
+    name: "Snyk — Dependency Vulnerability Scanning"
+    tool: "snyk"
+    category: "sca_dependencies"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+    report_file: "reports/security/gate-05-snyk.json"
+
+  6:
+    id: "gate-06-zap"
+    name: "OWASP ZAP — Dynamic Application Security Testing"
+    tool: "owasp-zap"
+    category: "dast"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+    report_file: "reports/security/gate-06-zap.json"
+
+  7:
+    id: "gate-07-sonarqube"
+    name: "SonarQube — Code Quality and Security Analysis"
+    tool: "sonar-scanner"
+    category: "code_quality"
+    critical_threshold: 0
+    high_threshold: 0
+    blocking: true
+    report_file: "reports/security/gate-07-sonarqube.json"
+

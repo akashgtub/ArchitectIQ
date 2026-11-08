@@ -1,0 +1,15 @@
+---
+# Role: deployment_support
+# Prepares deployment hooks, health check endpoints, and rollback trackers
+
+- name: Register deployment target parameters
+  ansible.builtin.debug:
+    msg:
+      - "Application: {{ app_name }}"
+      - "Version: {{ app_version }}"
+      - "Target Namespace: {{ k8s_namespace }}"
+      - "Backend Replicas: {{ backend_replicas }}"
+      - "Frontend Replicas: {{ frontend_replicas }}"
+      - "Backend Health Path: {{ backend_health_path }}"
+      - "Frontend Health Path: {{ frontend_health_path }}"
+

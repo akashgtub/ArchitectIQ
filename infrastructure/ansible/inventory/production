@@ -1,0 +1,8 @@
+[production]
+prod-k8s-node-01 ansible_host=127.0.0.1 ansible_connection=local
+
+[production:vars]
+deployment_environment=production
+k8s_context=docker-desktop
+namespace=architectiq
+

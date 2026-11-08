@@ -1,0 +1,63 @@
+services:
+  # ============================================================================
+  # ArchitectIQ Backend (FastAPI + In-Memory Simulation & Optimization Engines)
+  # ============================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: architectiq-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - PORT=8000
+      - AI_PROVIDER=${AI_PROVIDER:-huggingface}
+      - ALLOW_AI_FALLBACK=${ALLOW_AI_FALLBACK:-true}
+      - VISION_AI_PROVIDER=${VISION_AI_PROVIDER:-gemini}
+      - TEXT_AI_PROVIDER=${TEXT_AI_PROVIDER:-huggingface}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_MODEL=${HF_MODEL:-google/gemma-2-27b-it}
+      - HF_BASE_URL=${HF_BASE_URL:-https://router.huggingface.co/v1}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL_ID=${GEMINI_MODEL_ID:-gemini-flash-latest}
+      - USE_MOCK_SIMULATOR=${USE_MOCK_SIMULATOR:-false}
+      - SIMULATOR_TIMEOUT_SECONDS=${SIMULATOR_TIMEOUT_SECONDS:-30}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').getcode() == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - architectiq-net
+
+  # ============================================================================
+  # ArchitectIQ Frontend (Vite Compiled SPA + Nginx Reverse Proxy)
+  # ============================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: architectiq-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - architectiq-net
+
+networks:
+  architectiq-net:
+    driver: bridge
+    name: architectiq-network

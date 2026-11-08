@@ -1,0 +1,8 @@
+---
+# ArchitectIQ - Monitoring Configuration Playbook
+- name: Configure Prometheus & Grafana Observability
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: monitoring_setup
+

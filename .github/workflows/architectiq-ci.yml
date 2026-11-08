@@ -1,0 +1,92 @@
+name: ArchitectIQ CI/CD Pipeline Bridge
+
+# ============================================================================
+# Security Policy:
+# - Automatic execution strictly restricted to trusted pushes on 'main'.
+# - Pull requests are excluded to protect the privileged self-hosted runner.
+# - Manual execution via workflow_dispatch permitted for authorized contributors.
+# - Concurrency locked to prevent duplicate / interleaved pipeline runs.
+# ============================================================================
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      security_mode:
+        description: 'DevSecOps Quality Gate Enforcement Mode'
+        required: true
+        default: 'ADVISORY'
+        type: choice
+        options:
+          - ADVISORY
+          - STRICT
+
+# Minimal least-privilege token permissions
+permissions:
+  contents: read
+
+# Restrict concurrency to avoid duplicate builds for rapid consecutive commits
+concurrency:
+  group: architectiq-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  jenkins-pipeline:
+    name: Execute ArchitectIQ Pipeline via Local Jenkins
+    # Dedicated self-hosted Windows runner registered to the ArchitectIQ repository
+    runs-on: [self-hosted, Windows]
+
+    steps:
+      - name: 1. Checkout Trusted Source Code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 2. Verify Jenkins Controller Health (localhost:8081)
+        shell: powershell
+        run: |
+          Write-Host "Verifying Jenkins controller connectivity on port 8081..." -ForegroundColor Cyan
+          $resp = Invoke-WebRequest -Uri "http://127.0.0.1:8081/login" -Method Get -TimeoutSec 5 -UseBasicParsing -ErrorAction SilentlyContinue
+          if ($resp.StatusCode -eq 200 -or $resp.StatusCode -eq 403) {
+            Write-Host "Jenkins is healthy and reachable at http://127.0.0.1:8081." -ForegroundColor Green
+          } else {
+            Write-Error "Jenkins is unreachable on port 8081. Ensure devopsforge-jenkins container is active."
+            exit 1
+          }
+
+      - name: 3. Trigger and Track Jenkins Pipeline Execution
+        shell: powershell
+        env:
+          JENKINS_USER: ${{ secrets.JENKINS_USER || 'cicd-bot' }}
+          JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+        run: |
+          $mode = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "${{ github.event.inputs.security_mode }}"
+          } else {
+            "STRICT"
+          }
+          
+          Write-Host "Triggering ArchitectIQ-Pipeline with Security Mode: $mode" -ForegroundColor Yellow
+          
+          & .\scripts\ci\trigger-jenkins.ps1 `
+              -JenkinsUrl "http://localhost:8081" `
+              -JobName "ArchitectIQ-Pipeline" `
+              -SecurityMode $mode `
+              -CommitSha "${{ github.sha }}" `
+              -Branch "${{ github.ref_name }}" `
+              -RunId "${{ github.run_id }}"
+
+      - name: 4. Publish Retrieved DevSecOps Security Gate Summary
+        if: always()
+        shell: powershell
+        run: |
+          $summaryFile = "reports\security\security-summary.md"
+          if (Test-Path $summaryFile) {
+            Write-Host "Publishing Security Summary to GitHub Step Summary..." -ForegroundColor Cyan
+            "## ArchitectIQ DevSecOps Security Gate Results" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            Get-Content $summaryFile | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          } else {
+            Write-Host "[WARNING] No security-summary.md artifact retrieved from Jenkins build." -ForegroundColor Yellow
+          }
