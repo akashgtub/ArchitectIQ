@@ -83,6 +83,11 @@ pipeline {
             steps {
                 echo ">>> Stage 2: Running backend automated test suite..."
                 sh '''
+                    if [ ! -f "frontend/dist/index.html" ]; then
+                        echo "Compiling frontend bundle for integration tests..."
+                        npm --prefix frontend ci || npm --prefix frontend install
+                        npm --prefix frontend run build
+                    fi
                     if command -v pytest >/dev/null 2>&1; then
                         pytest backend/tests/ -v --junitxml=backend-test-results.xml
                     else
@@ -104,6 +109,7 @@ pipeline {
             steps {
                 echo ">>> Stage 3: Running frontend test suite..."
                 sh '''
+                    npm --prefix frontend ci || npm --prefix frontend install
                     npm --prefix frontend test
                 '''
             }
