@@ -630,13 +630,23 @@ def run_gate_6(mode: str = "STRICT", target_url: str = "http://localhost:8000") 
 
     # 1. Check if application is reachable
     app_healthy = False
-    try:
-        req = urllib.request.Request(f"{target_url}/health", headers={"User-Agent": "OWASP-ZAP-Baseline-Prober/1.0"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            if resp.status == 200:
-                app_healthy = True
-    except Exception:
-        pass
+    candidates = [target_url]
+    if "localhost" in target_url:
+        candidates.append(target_url.replace("localhost", "host.docker.internal"))
+    elif "127.0.0.1" in target_url:
+        candidates.append(target_url.replace("127.0.0.1", "host.docker.internal"))
+
+    active_target = target_url
+    for cand in candidates:
+        try:
+            req = urllib.request.Request(f"{cand}/health", headers={"User-Agent": "OWASP-ZAP-Baseline-Prober/1.0"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    app_healthy = True
+                    active_target = cand
+                    break
+        except Exception:
+            pass
 
     if not app_healthy:
         rep = {
@@ -668,7 +678,7 @@ def run_gate_6(mode: str = "STRICT", target_url: str = "http://localhost:8000") 
     low_count = 0
 
     for ep in endpoints:
-        full_url = f"{target_url}{ep}"
+        full_url = f"{active_target}{ep}"
         try:
             req = urllib.request.Request(full_url, headers={"User-Agent": "OWASP-ZAP-DAST-Scanner/2.14"})
             with urllib.request.urlopen(req, timeout=5) as resp:

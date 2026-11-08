@@ -60,15 +60,15 @@ pipeline {
                 echo ">>> Stage 1: Checkout repository and determine build metadata..."
                 checkout scm
                 script {
-                    SHORT_COMMIT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                    IMAGE_TAG = "${BUILD_NUMBER}-${SHORT_COMMIT}"
-                    currentBuild.displayName = "#${BUILD_NUMBER}-${SHORT_COMMIT}"
-                    def desc = "Security Mode: ${params.SECURITY_ENFORCEMENT_MODE} | Commit: ${SHORT_COMMIT}"
+                    env.SHORT_COMMIT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    env.IMAGE_TAG = "${BUILD_NUMBER}-${env.SHORT_COMMIT}"
+                    currentBuild.displayName = "#${BUILD_NUMBER}-${env.SHORT_COMMIT}"
+                    def desc = "Security Mode: ${params.SECURITY_ENFORCEMENT_MODE} | Commit: ${env.SHORT_COMMIT}"
                     if (params.GITHUB_RUN_ID) {
                         desc += " | GHA Run: #${params.GITHUB_RUN_ID}"
                     }
                     currentBuild.description = desc
-                    echo "Build Tag: ${IMAGE_TAG}"
+                    echo "Build Tag: ${env.IMAGE_TAG}"
                     if (params.GITHUB_RUN_ID) {
                         echo "Triggered by GitHub Actions Run ID: ${params.GITHUB_RUN_ID} (Branch: ${params.TRIGGERING_BRANCH}, Commit: ${params.TRIGGERING_COMMIT_SHA})"
                     }
@@ -124,8 +124,8 @@ pipeline {
                 sh '''
                     npm --prefix frontend run build
                     test -f frontend/dist/index.html || { echo "ERROR: dist/index.html not found!"; exit 1; }
-                    docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -t ${BACKEND_IMAGE}:latest -f backend/Dockerfile .
-                    docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -t ${FRONTEND_IMAGE}:latest -f frontend/Dockerfile .
+                    docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG:-latest} -t ${BACKEND_IMAGE}:latest -f backend/Dockerfile .
+                    docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG:-latest} -t ${FRONTEND_IMAGE}:latest -f frontend/Dockerfile .
                 '''
             }
         }
