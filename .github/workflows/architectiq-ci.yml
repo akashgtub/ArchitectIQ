@@ -44,6 +44,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure Git Safe Directory
+        shell: powershell
+        run: git config --global --add safe.directory "*"
+
       - name: 2. Verify Jenkins Controller Health (localhost:8081)
         shell: powershell
         run: |

@@ -179,13 +179,26 @@ if (-not (Test-Path $historyDir)) {
     New-Item -ItemType Directory -Path $historyDir -Force | Out-Null
 }
 
+$resolvedCommit = if ($env:GITHUB_SHA) { $env:GITHUB_SHA } elseif ($env:GIT_COMMIT_SHA) { $env:GIT_COMMIT_SHA } else {
+    $c = $null
+    $origEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'SilentlyContinue'
+        $c = & git rev-parse HEAD 2>$null
+    } catch {} finally {
+        $ErrorActionPreference = $origEap
+    }
+    $c
+}
+if (-not $resolvedCommit) { $resolvedCommit = "unknown" }
+
 $rollbackRecord = [PSCustomObject]@{
     Timestamp   = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     ImageTag    = $RollbackTag
     Registry    = $Registry
     Status      = "ROLLED_BACK"
     TriggeredBy = "Automated/Manual Rollback Procedure"
-    CommitSha   = (git rev-parse HEAD 2>$null)
+    CommitSha   = $resolvedCommit
 }
 
 $historyFile = Join-Path $historyDir "deployment-history.jsonl"

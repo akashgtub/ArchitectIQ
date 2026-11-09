@@ -3,3 +3,4 @@
 {"Timestamp":"2026-11-09T04:48:38Z","ImageTag":"latest","Registry":"architectiq","Status":"ROLLED_BACK","TriggeredBy":"Automated/Manual Rollback Procedure","CommitSha":"88f2079a60fcab37a15c400ecb625ca8b2f02415"}
 {"Timestamp":"2026-11-09T04:48:52Z","ImageTag":"latest","Registry":"architectiq","Status":"SUCCESS","CommitSha":"88f2079a60fcab37a15c400ecb625ca8b2f02415"}
 {"Timestamp":"2026-11-09T05:51:07Z","ImageTag":"22-ffb13ca","Registry":"architectiq","Status":"SUCCESS","CommitSha":"ffb13ca790fba5cfdce4666da529784cd44369b6"}
+{"Timestamp":"2026-11-09T06:14:56Z","ImageTag":"24-4092cf1","Registry":"architectiq","Status":"SUCCESS","CommitSha":"4092cf131c26544688ac5afaa73736c93f978f48"}

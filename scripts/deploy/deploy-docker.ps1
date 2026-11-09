@@ -292,12 +292,26 @@ if (-not $allHealthy) {
 # 6. Record Deployment Record
 # ---------------------------------------------------------------------------
 Write-Host "`nAll health checks passed successfully!" -ForegroundColor Green
+
+$resolvedCommit = if ($env:GITHUB_SHA) { $env:GITHUB_SHA } elseif ($env:GIT_COMMIT_SHA) { $env:GIT_COMMIT_SHA } else {
+    $c = $null
+    $origEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'SilentlyContinue'
+        $c = & git rev-parse HEAD 2>$null
+    } catch {} finally {
+        $ErrorActionPreference = $origEap
+    }
+    $c
+}
+if (-not $resolvedCommit) { $resolvedCommit = "unknown" }
+
 $deployRecord = [PSCustomObject]@{
     Timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     ImageTag  = $ImageTag
     Registry  = $Registry
     Status    = "SUCCESS"
-    CommitSha = (git rev-parse HEAD 2>$null)
+    CommitSha = $resolvedCommit
 }
 
 $deployRecord | ConvertTo-Json | Set-Content -Path $stateFile -Encoding UTF8 -Force
