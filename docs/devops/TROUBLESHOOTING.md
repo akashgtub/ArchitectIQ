@@ -1,59 +1,78 @@
 # ArchitectIQ — DevOps Troubleshooting Guide
 
-## 1. Quick Diagnostic Flowchart
+## 1. Quick Diagnostic Decision Tree
 
 ```text
 Issue Detected
    │
-   ├─► Build Failure (Jenkins Stage 4 or 6)
-   │     └─► Review Pytest / Node test output; verify Python 3.11 / Node 20 runtime.
+   ├─► Jenkins Build Fails at Security Gate (Stage 9 or 10)
+   │     └─► Check SECURITY_ENFORCEMENT_MODE. If STRICT, missing snyk-token or sonar-token blocks the build.
+   │         Set mode to ADVISORY for non-blocking execution, or add credential in Jenkins.
    │
-   ├─► Infrastructure Validation Failure (Jenkins Stage 8-12)
-   │     └─► Review Terraform fmt/validate or Ansible syntax check logs.
+   ├─► Docker Compose Deployment Fails / Auto-Rollback Triggered
+   │     └─► scripts/deploy/deploy-docker.ps1 probed :8000, :80, or proxy and received non-200.
+   │         Check container logs: `docker logs architectiq-backend` or `docker logs architectiq-frontend`.
    │
-   ├─► Container Fails Healthcheck
-   │     └─► Inspect backend logs: uvicorn startup errors, missing port, or CORS issues.
+   ├─► GitHub Actions CI/CD Bridge Fails with HTTP 403 / Crumb Error
+   │     └─► Verify cicd-bot API token in logs/jenkins/cicd-bot.token or GitHub Secrets.
+   │         Confirm CSRF crumb issuer is reachable at http://localhost:8081/crumbIssuer/api/json.
    │
-   ├─► Kubernetes Rollout Timeout
-   │     └─► Check pod status: CrashLoopBackOff, ImagePullBackOff, or OOMKilled.
+   ├─► Prometheus Active Target Shows 'DOWN'
+   │     └─► Query http://localhost:9090/api/v1/targets.
+   │         Ensure target container is attached to architectiq-network and port is reachable.
    │
-   └─► Frontend Cannot Reach Backend
-         └─► Verify Nginx proxy pass to backend:8000 and service DNS resolution.
+   └─► Terraform Validate Hangs on Windows
+         └─► AWS provider attempts connection to link-local metadata IP 169.254.169.254.
+             Ensure skip_metadata_api_check = true and skip_credentials_validation = true in providers.tf.
 ```
 
 ---
 
 ## 2. Common Scenarios & Resolutions
 
-### Scenario 1: Backend Pods in `CrashLoopBackOff`
-- **Symptom**: Kubernetes shows backend pods failing to start.
-- **Root Causes**:
-  - Missing Python module or import failure.
-  - Invalid environment variable configuration.
-- **Diagnostic Procedure**:
-  - Inspect pod standard output and error streams in the Kubernetes namespace.
-  - Inspect pod event timelines for failed probes or termination signals.
+### Scenario 1: Snyk or SonarCloud Gate Fails Pipeline with `BLOCKED`
+- **Symptom**: Jenkins build halts at Stage 9 (Snyk) or Stage 10/11 (SonarCloud) with exit code 1.
+- **Root Cause**: The pipeline was triggered in `STRICT` mode, and the mandatory cloud API tokens (`snyk-token`, `sonar-token`) are not configured in Jenkins.
 - **Resolution**:
-  - Confirm `PYTHONPATH=/app` is set in the container environment.
-  - Verify that `PORT=8000` is defined and matches the readiness probe.
+  - To run in non-blocking mode: Pass parameter `SECURITY_ENFORCEMENT_MODE=ADVISORY` when triggering the build.
+  - To configure credentials in Jenkins: Navigate to `Manage Jenkins -> Credentials -> System -> Global credentials`, add Secret Text credentials with ID `snyk-token` and `sonar-token`.
 
-### Scenario 2: Frontend Build Artifacts Missing
-- **Symptom**: Jenkins build fails in Stage 7 with missing `dist/index.html`.
-- **Root Cause**: Vite production build failed due to syntax error or missing asset.
-- **Resolution**:
-  - Review the Vite compilation error log in Jenkins console.
-  - Run frontend tests locally to identify broken components or syntax errors.
+---
 
-### Scenario 3: `ERR_FRONTEND_NOT_BUILT` on Startup
-- **Symptom**: Accessing backend root `/` returns HTTP 503 `ERR_FRONTEND_NOT_BUILT`.
-- **Root Cause**: The frontend production build assets were not found in `frontend/dist`.
+### Scenario 2: Post-Deployment Health Check Failure & Automatic Rollback
+- **Symptom**: Deployment script reports `Health verification failed! Application containers did not respond within 60s` and automatically rolls back.
+- **Root Cause**: The backend or frontend container crashed on startup or did not listen on the expected port (`8000` for backend, `80` for frontend).
 - **Resolution**:
-  - When running via Docker, ensure you are accessing the frontend container on port 80, which compiles and serves static assets directly via Nginx.
-  - When running standalone backend locally, compile the frontend bundle first using the build script.
+  - Check container logs immediately:
+    ```powershell
+    docker logs --tail 50 architectiq-backend
+    docker logs --tail 50 architectiq-frontend
+    ```
+  - Verify that `reports/deployments/last-known-good.json` successfully restored the prior stable tag.
+  - Fix any syntax or configuration errors in `backend/` or `frontend/`, rebuild images, and redeploy.
 
-### Scenario 4: Nginx 502 Bad Gateway on Frontend
-- **Symptom**: Frontend loads, but API requests return `502 Bad Gateway`.
-- **Root Cause**: Nginx cannot connect to the backend upstream on `backend:8000`.
+---
+
+### Scenario 3: Jenkins API CSRF Crumb Error (403 Forbidden)
+- **Symptom**: `scripts/ci/trigger-jenkins.ps1` fails with HTTP 403 when requesting `/crumbIssuer/api/json` or triggering `/buildWithParameters`.
+- **Root Cause**: Outdated or invalid API token for service account `cicd-bot`.
 - **Resolution**:
-  - Confirm the backend service is healthy and reachable over the Docker bridge network `architectiq-net` or Kubernetes DNS `backend.architectiq.svc.cluster.local`.
-  - In Kubernetes, verify that the `backend` service selector matches `app.kubernetes.io/name: architectiq-backend`.
+  - Confirm token in `logs/jenkins/cicd-bot.token`.
+  - In Jenkins UI (`http://localhost:8081`), log in as admin, navigate to user `cicd-bot`, generate a fresh API token, and update the file and GitHub Secrets.
+
+---
+
+### Scenario 4: Terraform Hangs During Provider Initialization
+- **Symptom**: `terraform validate` or `terraform plan` hangs indefinitely without CPU activity.
+- **Root Cause**: The AWS provider tries to connect to AWS EC2 metadata IP `169.254.169.254`. On non-AWS Windows hosts, Windows waits for TCP socket timeout.
+- **Resolution**:
+  - In `infrastructure/terraform/environments/aws/providers.tf`, configure:
+    ```hcl
+    provider "aws" {
+      region                      = var.aws_region
+      skip_credentials_validation = true
+      skip_requesting_account_id  = true
+      skip_metadata_api_check     = true
+    }
+    ```
+  - Set `$env:AWS_EC2_METADATA_DISABLED="true"`.

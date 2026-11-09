@@ -1,80 +1,66 @@
-# ArchitectIQ — CI/CD Pipeline Reference & Stage Breakdown
+# ArchitectIQ — CI/CD Pipeline Architecture & Stage Reference
 
 ## 1. Overview
 
-The ArchitectIQ CI/CD pipeline is implemented in declarative Jenkins syntax (`Jenkinsfile`). It automates the full lifecycle from code push to Kubernetes deployment across 20 sequential stages with automated safety gates.
+ArchitectIQ implements an enterprise hybrid CI/CD pipeline combining **GitHub Actions** on a Windows self-hosted runner (`ARCHITECTIQ-WIN-RUNNER`) and **Jenkins** in Docker (`devopsforge-jenkins`).
+
+```
+[ Push to main / Manual Dispatch ]
+                 │
+                 ▼
+     [ GitHub Actions Workflow ]
+  (Runs on ARCHITECTIQ-WIN-RUNNER)
+                 │
+                 ▼
+[ scripts/ci/trigger-jenkins.ps1 ]
+  - Service Account: cicd-bot
+  - CSRF Crumb Acquisition
+  - POST /job/ArchitectIQ-Pipeline/buildWithParameters
+                 │
+                 ▼
+     [ Jenkins Declarative Pipeline ]
+  (14 Sequential Stages & DevSecOps Gates)
+                 │
+                 ▼
+  [ Artifact Download & Summary Publishing ]
+  (reports/security/security-summary.md -> GitHub Step Summary)
+                 │
+                 ▼
+  [ Automated Docker Compose Deployment ]
+  (scripts/deploy/deploy-docker.ps1)
+  - Rolling container update (~1-3s minimal recreation cutover)
+  - Automated health probing (:8000, :80, reverse proxy)
+  - Instant automated rollback guard (rollback-docker.ps1)
+```
 
 ---
 
-## 2. 20-Stage Breakdown & Functionality
+## 2. Jenkins Pipeline 14-Stage Breakdown
 
-### Stage 1: Checkout
-- Clones the Git repository commit triggered by GitHub webhook or SCM polling.
-- Generates build metadata including build number, Git short commit identifier, and unified image tag.
+| Stage # | Stage Name | Operations & Guardrails |
+| :---: | :--- | :--- |
+| **1** | **Checkout** | Clones source, extracts short commit SHA, sets displayName (`#<BUILD>-<SHA>`), and tags build. |
+| **2** | **Backend Tests** | Executes 122 Pytest automated tests covering simulation, optimizer, and chaos engines (`--junitxml`). |
+| **3** | **Frontend Tests** | Executes 13 Node unit and regression tests confirming state lifecycle and UI gatekeepers. |
+| **4** | **Application Build** | Compiles Vite production bundle (`frontend/dist`) and builds Docker images for backend and frontend. |
+| **5** | **TruffleHog (Gate 1)** | Scans repository and history for committed secrets, credentials, and API keys. |
+| **6** | **Bandit (Gate 2)** | Executes Python AST static security analysis on `backend/` source tree. |
+| **7** | **Checkov (Gate 3)** | Scans Infrastructure-as-Code definitions in `infrastructure/terraform/` for cloud security misconfigurations. |
+| **8** | **Hadolint (Gate 4)** | Lints backend and frontend Dockerfiles against container security best practices. |
+| **9** | **Snyk (Gate 5)** | Scans application dependencies via Snyk Cloud SaaS engine using Jenkins credential `snyk-token`. |
+| **10** | **SonarQube Analysis (Gate 7)** | Executes static code analysis and transmits findings to hosted SonarCloud engine using `sonar-token`. |
+| **11** | **SonarQube Quality Gate (Gate 7)** | Evaluates SonarCloud Quality Gate status (`PASS`, `FAIL`, or `BLOCKED`). |
+| **12** | **OWASP ZAP (Gate 6)** | Performs automated baseline DAST probing against the local backend endpoint (`:8000`). |
+| **13** | **Security Report Aggregation** | Aggregates all gate reports into `security-summary.json` and `security-summary.md`; archives artifacts. |
+| **14** | **Image Verification & Deployment Gate** | Inspects built container images, validates metadata, and generates `reports/deployments/build-manifest.json`. |
 
-### Stage 2: Environment Verification
-- Inspects and verifies the execution environment, installed tooling (Python, Node.js, Docker, Terraform, kubectl), and system dependencies.
+---
 
-### Stage 3: Backend Dependency Installation
-- Resolves Python 3.11 production dependencies from `requirements.txt`.
-- Verifies that all required packages can be cleanly imported into the runtime environment.
+## 3. GitHub Actions Bridge Script (`trigger-jenkins.ps1`)
 
-### Stage 4: Backend Tests
-- Executes the full backend Pytest automated test suite (122 tests across simulation, optimizer, and chaos engineering).
-- Enforces strict quality gate: If any test fails, the pipeline immediately halts.
-
-### Stage 5: Frontend Dependency Installation
-- Installs clean dependencies using `package-lock.json` for deterministic resolution.
-- Validates integrity of required Node.js build modules.
-
-### Stage 6: Frontend Tests
-- Executes the native Node.js unit and regression test suite (13 tests).
-- Confirms state lifecycle, API client contracts, and UI gatekeepers.
-
-### Stage 7: Frontend Production Build
-- Compiles the production bundle via Vite.
-- Verifies existence of `dist/index.html` and `dist/assets`; halts if compilation fails.
-
-### Stage 8: Terraform Format Check
-- Checks formatting of all Terraform definitions in `infrastructure/terraform/` using `terraform fmt -check -recursive`.
-
-### Stage 9: Terraform Initialization
-- Initializes the Terraform working directory and provider plugins in non-interactive mode.
-
-### Stage 10: Terraform Validation
-- Validates syntax and provider schema compatibility of Terraform configurations prior to planning.
-
-### Stage 11: Terraform Plan
-- Generates a speculative execution plan using `terraform plan -input=false` without applying changes to state.
-
-### Stage 12: Ansible Validation
-- Validates Ansible automation assets in `infrastructure/ansible/`, inspecting inventory definitions, syntax, and task declarations.
-
-### Stage 13: Docker Image Build
-- Compiles the backend container image using Python 3.11-slim and the frontend container image using multi-stage Node 20 / Nginx Alpine runtime.
-- Tags images with versioned identifier `${BUILD_NUMBER}-${SHORT_COMMIT}` and `latest`.
-
-### Stage 14: Docker Image Verification
-- Inspects built Docker images, verifies manifest metadata, image labels, and binary presence.
-
-### Stage 15: Kubernetes Pre-deployment Checks
-- Validates cluster connectivity, verifies namespace `architectiq` existence, and checks resource availability before applying manifests.
-
-### Stage 16: Kubernetes Deployment
-- Applies Kubernetes manifests (ConfigMaps, Secrets, Deployments, and Services) targeting the `architectiq` namespace.
-- Updates deployment images to reference the newly built and verified version tag.
-
-### Stage 17: Kubernetes Rollout Verification
-- Monitors rolling deployment status across backend and frontend Deployments with a rollout timeout.
-
-### Stage 18: Application Health Verification
-- Queries live container health endpoints inside the cluster:
-  - Backend health probe targeting `/health`.
-  - Frontend web probe targeting `/healthz`.
-
-### Stage 19: Monitoring Verification
-- Verifies Prometheus target accessibility and ensures Prometheus and Grafana monitoring stacks are active and healthy.
-
-### Stage 20: Build Summary
-- Assembles a structured summary report containing build status, metadata, commit SHA, image tags, and test results.
-- Archives the summary as a persistent build artifact in Jenkins.
+The PowerShell bridge script coordinates communication between the self-hosted runner and the Jenkins controller:
+- **Authentication**: Authenticates using the `cicd-bot` service account and API token.
+- **CSRF Crumb Protection**: Automatically requests and injects the Jenkins CSRF crumb header (`Jenkins-Crumb`).
+- **Log Streaming**: Progressively streams live console logs from Jenkins directly to the GitHub Actions workflow terminal.
+- **Artifact Retrieval**: Downloads archived DevSecOps reports (`security-summary.md` and `security-summary.json`) via authenticated REST calls.
+- **Step Summary**: Renders the complete security gate report table in the GitHub Actions Actions tab.

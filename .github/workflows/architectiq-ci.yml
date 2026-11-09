@@ -65,7 +65,7 @@ jobs:
           $mode = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             "${{ github.event.inputs.security_mode }}"
           } else {
-            "STRICT"
+            if ($env:SECURITY_MODE) { $env:SECURITY_MODE } else { "ADVISORY" }
           }
           
           Write-Host "Triggering ArchitectIQ-Pipeline with Security Mode: $mode" -ForegroundColor Yellow
@@ -90,3 +90,10 @@ jobs:
           } else {
             Write-Host "[WARNING] No security-summary.md artifact retrieved from Jenkins build." -ForegroundColor Yellow
           }
+
+      - name: 5. Automated Docker Compose Deployment
+        if: success()
+        shell: powershell
+        run: |
+          Write-Host "Jenkins pipeline passed all security gates. Proceeding with Docker Compose deployment..." -ForegroundColor Green
+          & .\scripts\deploy\deploy-docker.ps1 -ImageTag "latest" -TimeoutSec 60

@@ -1,62 +1,60 @@
-# ArchitectIQ — Rollback & Recovery Guide
+# ArchitectIQ — Rollback & Disaster Recovery Guide
 
 ## 1. Overview
 
-ArchitectIQ incorporates automated and manual rollback mechanisms across Kubernetes, Docker, and the Jenkins CI/CD pipeline. This ensures zero data loss and minimal recovery time when deployment failures or regressions occur.
+ArchitectIQ maintains an automated, stateful rollback mechanism powered by `scripts/deploy/rollback-docker.ps1` and state tracking in `reports/deployments/last-known-good.json`.
 
 ---
 
-## 2. Automated Pipeline Rollback (Stage 12)
+## 2. Automatic Rollback Mechanism
 
-When `AUTO_ROLLBACK_ON_FAILURE=true` in Jenkins parameters:
-
-1. Stage 12 executes post-deployment health checks against both backend (`/health`) and frontend (`/healthz`).
-2. If either endpoint fails to respond with HTTP 200 within the timeout window, the pipeline initiates an immediate rollback:
-   ```bash
-   kubectl rollout undo deployment/architectiq-backend -n architectiq
-   kubectl rollout undo deployment/architectiq-frontend -n architectiq
-   ```
-3. Kubernetes immediately terminates the failing new revision pods and restores the previous known-good deployment revision.
-4. The pipeline marks the build as failed and logs the incident for investigation.
+During automated deployments via `scripts/deploy/deploy-docker.ps1`:
+- If newly deployed containers fail to pass health checks across `/health` (backend), `/healthz` (frontend), and `/health` (reverse proxy) within 60 seconds, an automatic rollback is immediately initiated.
+- The script restores the exact `last-known-good` image tag recorded before the failed deployment.
+- Rollback execution and health verification results are appended to `reports/deployments/deployment-history.jsonl` with status `ROLLED_BACK`.
 
 ---
 
-## 3. Manual Kubernetes Rollback Procedures
+## 3. Manual Rollback Execution
 
-### 1. View Deployment Rollout History
-```bash
-kubectl rollout history deployment/architectiq-backend -n architectiq
+If manual rollback is required by an operator:
 
-kubectl rollout history deployment/architectiq-frontend -n architectiq
+### Option A: Rollback to Last-Known-Good Tag
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\deploy\rollback-docker.ps1
 ```
+The script will inspect `reports/deployments/last-known-good.json` and restore the last successfully verified tag.
 
-### 2. Rollback to the Immediately Preceding Revision
-```bash
-kubectl rollout undo deployment/architectiq-backend -n architectiq
-kubectl rollout undo deployment/architectiq-frontend -n architectiq
-```
-
-### 3. Rollback to a Specific Historical Revision
-```bash
-kubectl rollout undo deployment/architectiq-backend -n architectiq --to-revision=2
-
-kubectl rollout status deployment/architectiq-backend -n architectiq
+### Option B: Rollback to a Specific Historical Tag
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\deploy\rollback-docker.ps1 -RollbackTag <SPECIFIC_TAG>
 ```
 
 ---
 
-## 4. Docker Compose Rollback
+## 4. Post-Rollback Health Validation
 
-If operating under Docker Compose without Kubernetes:
+After rollback completes, verify service reachability:
+```powershell
+# 1. Backend health
+Invoke-WebRequest -Uri "http://localhost:8000/health" -UseBasicParsing
 
-```bash
-export IMAGE_TAG=previous-stable-tag
-docker-compose up -d --no-build
+# 2. Frontend health
+Invoke-WebRequest -Uri "http://localhost:80/healthz" -UseBasicParsing
+
+# 3. Reverse proxy health
+Invoke-WebRequest -Uri "http://localhost:80/health" -UseBasicParsing
 ```
+All three endpoints must return `HTTP 200 OK`.
 
 ---
 
-## 5. State Preservation During Rollbacks
+## 5. Volume & Data Protection Guardrails
 
-Because ArchitectIQ operates in-memory for session investigations (`_INVESTIGATIONS_DB`) and baseline results (`_BASELINE_STORE`) without modifying persistent external databases, rollbacks are safe, atomic, and do not require destructive database schema rollbacks.
+ArchitectIQ's application containers (`backend`, `frontend`) are entirely stateless. All metrics and dashboard configurations reside in isolated named Docker volumes:
+- `architectiq-prometheus-data`
+- `architectiq-grafana-data`
+- `devopsforge_jenkins_home`
 
+> [!IMPORTANT]
+> Rolling back application containers never touches or resets persistent volumes.

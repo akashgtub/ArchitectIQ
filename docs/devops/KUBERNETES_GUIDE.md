@@ -1,4 +1,7 @@
-# ArchitectIQ — Kubernetes Orchestration Guide
+# ArchitectIQ — Kubernetes Orchestration Reference Guide
+
+> [!NOTE]
+> In accordance with Project Architectural Rule 1, Kubernetes orchestration is excluded from active deployment in favor of a lean, production-style Docker Compose deployment. The manifests in `infrastructure/kubernetes/` are preserved strictly as declarative Infrastructure-as-Code reference assets.
 
 ## 1. Overview
 

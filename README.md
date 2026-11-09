@@ -1,300 +1,163 @@
-# ArchitectIQ — Enterprise DevOps & DevSecOps Platform
+# ArchitectIQ — Enterprise DevOps, DevSecOps & AI Architecture Engineering Platform
 
-ArchitectIQ is an end-to-end autonomous AI system engineering platform. It ingests system architecture diagrams, validates graph topologies, executes workload-driven discrete-event simulations, discovers performance bottlenecks via AI root-cause analysis, synthesizes alternative candidate architectures through deterministic multi-objective optimization, and stresses systems using chaos engineering resilience experiments.
+[![CI/CD Bridge](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions%20%2B%20Jenkins-blue?style=flat-square&logo=jenkins)](https://github.com/akashgtub/ArchitectIQ)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%28Python%203.11%29-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB?style=flat-square&logo=react)](https://react.dev)
+[![Docker](https://img.shields.io/badge/Containers-Docker%20Compose-2496ED?style=flat-square&logo=docker)](https://www.docker.com)
+[![DevSecOps](https://img.shields.io/badge/Security-7%20Automated%20Gates-red?style=flat-square&logo=owasp)](security/)
+[![Prometheus](https://img.shields.io/badge/Metrics-Prometheus%20Time--Series-E6522C?style=flat-square&logo=prometheus)](http://localhost:9090)
+[![Grafana](https://img.shields.io/badge/Observability-Grafana%20Dashboards-F46800?style=flat-square&logo=grafana)](http://localhost:3001)
+[![Terraform](https://img.shields.io/badge/IaC-Terraform%20v1.5%2B-7B42BC?style=flat-square&logo=terraform)](https://www.terraform.io)
+[![Ansible](https://img.shields.io/badge/Automation-Ansible%20Playbooks-EE0000?style=flat-square&logo=ansible)](infrastructure/ansible/)
 
-This repository features an enterprise-grade, modular, five-component architecture that strictly isolates the application runtime, DevOps infrastructure, monitoring observability, DevSecOps security automation (7 Essential Tools), and CI/CD pipelines.
+**ArchitectIQ** is an enterprise-grade AI system design simulation and optimization engine. It ingests system architecture diagrams, transforms them into directed NetworkX graph topologies, simulates discrete-event workloads under dynamic traffic patterns, discovers performance bottlenecks through AI root-cause analysis, synthesizes Pareto-optimal candidate architectures via multi-objective genetic algorithms (NSGA-II), and validates system resilience using chaos fault-injection experiments.
 
----
-
-## 🏛️ Enterprise Five-Component Architecture
-
-The platform is partitioned into five independently manageable components that interact strictly through defined network interfaces and APIs without cross-layer coupling:
-
-```
-+-------------------------------------------------------------------------------+
-|                           ArchitectIQ Enterprise Platform                     |
-+-------------------------------------------------------------------------------+
-| [Component A] Application Runtime                                             |
-|   - Backend: FastAPI (Python 3.11, discrete simulation & optimization)        |
-|   - Frontend: Vite-compiled SPA + Nginx reverse proxy                         |
-|   - Root Compose: docker-compose.yml (Ports 80, 8000)                         |
-|   - Architecture: In-Memory State, zero external DB dependencies              |
-+-------------------------------------------------------------------------------+
-| [Component B] DevOps Infrastructure                                           |
-|   - Infrastructure as Code: infrastructure/terraform/                         |
-|   - Container Orchestration: infrastructure/kubernetes/                       |
-|   - Configuration Automation: infrastructure/ansible/                         |
-|   - Jenkins CI/CD Controller: infrastructure/jenkins/                         |
-|   - Independent SonarQube Service: infrastructure/security/                   |
-+-------------------------------------------------------------------------------+
-| [Component C] Monitoring & Observability Stack                                |
-|   - Prometheus: Metric scraping & storage (Port 9090)                         |
-|   - Grafana: Metric visualization & alert dashboards (Port 3001)              |
-|   - Compose: infrastructure/monitoring/docker-compose.monitoring.yml          |
-+-------------------------------------------------------------------------------+
-| [Component D] DevSecOps Security Framework (7 Essential Tools)                |
-|   - 7 Security Gates: TruffleHog, Bandit, Checkov, Hadolint, Snyk, ZAP, Sonar |
-|   - Isolated Python Virtualenv: security/.venv                                |
-|   - Runners: security/runners/run-*.ps1                                       |
-|   - Standardized Output: reports/security/gate-01 through 07.json             |
-+-------------------------------------------------------------------------------+
-| [Component E] CI/CD Pipeline Automation                                       |
-|   - Jenkinsfile: 13-stage enterprise pipeline with zero failure masking       |
-|   - Jenkins Controller Container: devopsforge-jenkins (Port 8081)             |
-+-------------------------------------------------------------------------------+
-```
+The platform is designed around a **stateless, in-memory execution architecture** requiring zero external SQL/NoSQL databases, backed by an automated CI/CD pipeline, continuous observability, and a 7-gate DevSecOps framework.
 
 ---
 
-## 🚀 Quick Start: Central Batch Launcher
+## 🏛️ System & DevOps Architecture
 
-The platform is managed through a central, path-independent Windows Batch script:
-
-```cmd
-start-architectiq.bat
 ```
-
-The launcher provides an interactive 31-option console menu covering all platform operations:
-
-```text
-============================================================================
-                     ARCHITECTIQ PLATFORM LAUNCHER                         
-              Enterprise DevOps, CI/CD, and DevSecOps Suite                
-============================================================================
-
-  [ APPLICATION (FRONTEND + BACKEND) ]
-    1. Start Application
-    2. Stop Application
-    3. Restart Application
-    4. Application Status and Health
-    5. Open Application UI in Browser (http://localhost)
-
-  [ DEVOPS INFRASTRUCTURE ]
-    6. Start DevOps Infrastructure (Monitoring + Jenkins)
-    7. Stop DevOps Infrastructure
-    8. DevOps Infrastructure Status
-
-  [ MONITORING and OBSERVABILITY ]
-    9. Start Monitoring Stack (Prometheus + Grafana)
-   10. Stop Monitoring Stack
-   11. Monitoring Stack Status
-   12. Open Prometheus in Browser (http://localhost:9090)
-   13. Open Grafana in Browser (http://localhost:3001)
-
-  [ CI/CD AUTOMATION (JENKINS) ]
-   14. Start Jenkins Controller
-   15. Stop Jenkins Controller
-   16. Jenkins Status
-   17. Open Jenkins in Browser (http://localhost:8081)
-
-  [ DEVSECOPS SECURITY FRAMEWORK (7 ESSENTIAL TOOLS) ]
-   18. Start Security Tools (SonarQube)
-   19. Stop Security Tools (SonarQube)
-   20. Run All 7 Security Scans
-   21. Run Individual Security Scan (Gate 1 - 7)
-   22. Run SonarQube Analysis
-   23. Run OWASP ZAP against Local Test Environment
-   24. View Security Reports
-   25. Display Security Status and Summary
-
-  [ PLATFORM and CONFIG VALIDATION ]
-   26. Validate Docker Configurations
-   27. Validate Terraform IaC Configurations
-   28. Validate Kubernetes Manifests
-   29. Validate Ansible Playbooks
-
-  [ COMPREHENSIVE AUDIT and EXIT ]
-   30. Check All Platform Components and Endpoints
-   31. Exit
+                                      [ Code Push / Webhook ]
+                                                 │
+                                                 ▼
+                                    ┌────────────────────────┐
+                                    │  GitHub Actions Runner │
+                                    │ (ARCHITECTIQ-WIN-RUNNER│
+                                    └────────────┬───────────┘
+                                                 │ Authenticated REST API (trigger-jenkins.ps1)
+                                                 ▼
+                                    ┌────────────────────────┐
+                                    │ Jenkins Controller CI  │
+                                    │ (devopsforge-jenkins)  │
+                                    └────────────┬───────────┘
+                                                 │
+                   ┌─────────────────────────────┼─────────────────────────────┐
+                   ▼                             ▼                             ▼
+        ┌──────────────────────┐      ┌──────────────────────┐      ┌──────────────────────┐
+        │  Automated Testing   │      │ DevSecOps 7 Gates    │      │ Image Packaging      │
+        │ - Pytest (122 tests) │      │ - TruffleHog (Sec)   │      │ - Multi-stage Build  │
+        │ - Vitest (13 tests)  │      │ - Bandit (Python)    │      │ - Docker Image Tag   │
+        │ - Total: 135/135 Pass│      │ - Checkov (IaC)      │      │ - Manifest Archive   │
+        │                      │      │ - Hadolint (Docker)  │      │                      │
+        │                      │      │ - Snyk (SaaS Deps)   │      │                      │
+        │                      │      │ - OWASP ZAP (DAST)   │      │                      │
+        │                      │      │ - SonarCloud (SaaS)  │      │                      │
+        └──────────────────────┘      └──────────────────────┘      └──────────────────────┘
+                                                 │
+                                                 ▼ (On Pipeline SUCCESS)
+                                    ┌────────────────────────┐
+                                    │ Minimal-Downtime Deploy│
+                                    │ (deploy-docker.ps1)    │
+                                    └────────────┬───────────┘
+                                                 │ Rolling Update & Health Probing (:8000, :80)
+                                                 ▼ (If Unhealthy: rollback-docker.ps1)
+                         ┌───────────────────────────────────────┐
+                         │       Production Docker Network       │
+                         │         (architectiq-network)         │
+                         │                                       │
+                         │  ┌─────────────────┐ ┌──────────────┐ │
+                         │  │ Nginx Frontend  │ │ FastAPI App  │ │
+                         │  │ (Port 80)       │ │ (Port 8000)  │ │
+                         │  └────────┬────────┘ └──────┬───────┘ │
+                         └───────────┼─────────────────┼─────────┘
+                                     │                 │ Scrape /metrics
+                                     ▼                 ▼
+                         ┌───────────────────────────────────────┐
+                         │     Monitoring & Observability        │
+                         │                                       │
+                         │  ┌─────────────────┐ ┌──────────────┐ │
+                         │  │ Prometheus TSDB │ │ Grafana UI   │ │
+                         │  │ (Port 9090)     │ │ (Port 3001)  │ │
+                         │  └─────────────────┘ └──────────────┘ │
+                         └───────────────────────────────────────┘
 ```
 
 ---
 
-## 📁 Repository Directory Structure
+## ⚡ Key DevOps & DevSecOps Capabilities
 
-```text
-ArchitectIQ/
-├── backend/                                   # Component A: FastAPI Application
-│   ├── ai_agent/                              # Multi-modal architecture ingestion & extraction
-│   ├── api/                                   # REST API endpoints & schemas
-│   ├── chaos_lab/                             # Chaos engineering & failure simulator
-│   ├── optimizer/                             # Architecture candidate generator & optimizer
-│   ├── simulator/                             # Discrete-event performance simulation engine
-│   ├── shared/                                # Canonical data contracts and adapters
-│   ├── tests/                                 # 122 automated backend pytest unit & integration tests
-│   ├── config.py                              # Application configuration
-│   ├── Dockerfile                             # Multi-stage security-hardened backend image
-│   └── main.py                                # FastAPI app entrypoint
-├── frontend/                                  # Component A: Single-Page Application (SPA)
-│   ├── src/                                   # UI logic, state manager, design system
-│   ├── test/                                  # 13 automated frontend unit tests
-│   ├── Dockerfile                             # Multi-stage Nginx-based frontend image
-│   ├── nginx.conf                             # Reverse proxy & security header config
-│   ├── package.json                           # Node.js dependencies
-│   └── vite.config.js                         # Vite build configuration
-├── docker-compose.yml                         # Component A: Application Compose (Backend + Frontend ONLY)
-├── infrastructure/                            # Component B & C: DevOps Infrastructure
-│   ├── ansible/                               # Component B: Ansible playbooks, roles & inventories
-│   │   ├── inventory/                         # Host inventory configurations
-│   │   ├── playbooks/                         # Playbooks for provisioning, deployment, monitoring
-│   │   └── roles/                             # Modular Ansible tasks
-│   ├── jenkins/                               # Component E: Jenkins CI/CD Controller
-│   │   └── docker-compose.jenkins.yml         # Jenkins Docker Compose stack (Port 8081, 50000)
-│   ├── kubernetes/                            # Component B: K8s manifests & Kustomize
-│   │   ├── backend-deployment.yaml            # Backend deployment spec
-│   │   ├── frontend-deployment.yaml           # Frontend deployment spec
-│   │   ├── kustomization.yaml                 # Kustomize manifest bundle
-│   │   └── namespace.yaml                     # Dedicated 'architectiq' namespace
-│   ├── monitoring/                            # Component C: Monitoring & Observability Stack
-│   │   ├── docker-compose.monitoring.yml      # Decoupled Prometheus & Grafana stack
-│   │   ├── grafana/                           # Grafana datasource & dashboard provisioning
-│   │   └── prometheus/                        # Prometheus scrape configuration
-│   ├── security/                              # Component B: Independent Security Services
-│   │   └── docker-compose.security.yml        # Independent SonarQube service (Port 9000)
-│   └── terraform/                             # Component B: Infrastructure as Code
-│       ├── environments/                      # Environment configs (local, aws, production)
-│       └── modules/                           # Reusable Terraform modules
-├── security/                                  # Component D: DevSecOps Automation Framework
-│   ├── .venv/                                 # Isolated virtualenv for scanner dependencies
-│   ├── config/                                # Policy thresholds & configuration
-│   │   └── security-policy.yaml               # Gatekeeper thresholds & enforcement rules
-│   ├── framework/                             # Security runner engine
-│   │   ├── seven_gates_runner.py              # Unified engine for 7 essential security tools
-│   │   ├── gatekeeper.py                      # Policy compliance evaluator
-│   │   └── normalizer.py                      # Standardized report model
-│   ├── runners/                               # Individual PowerShell gate runners
-│   │   ├── run-trufflehog.ps1                 # Gate 1 runner
-│   │   ├── run-bandit.ps1                     # Gate 2 runner
-│   │   ├── run-checkov.ps1                    # Gate 3 runner
-│   │   ├── run-hadolint.ps1                   # Gate 4 runner
-│   │   ├── run-snyk.ps1                       # Gate 5 runner
-│   │   ├── run-zap.ps1                        # Gate 6 runner
-│   │   └── run-sonarqube.ps1                  # Gate 7 runner
-│   ├── scripts/                               # Multi-gate automation scripts
-│   │   ├── run-all-gates.ps1                  # Runs all 7 gates and aggregates summary
-│   │   ├── run-single-gate.ps1                # Runs specified gate (1-7)
-│   │   └── security-summary.ps1               # Displays aggregated console summary
-│   ├── reports/
-│   │   └── .gitkeep                           # Git tracking anchor
-│   └── README.md                              # Dedicated security manual
-├── scripts/                                   # Platform Automation Scripts
-│   ├── application/                           # start-app, stop-app, restart-app, app-status
-│   ├── infrastructure/                        # start-devops, stop-devops, devops-status
-│   ├── monitoring/                            # start-monitoring, stop-monitoring, monitoring-status
-│   ├── jenkins/                               # start-jenkins, stop-jenkins, jenkins-status
-│   ├── security/                              # start-security, stop-security, view-reports
-│   ├── validation/                            # validate-docker, validate-terraform, validate-k8s, validate-ansible
-│   └── health/                                # check-all-services
-├── reports/                                   # DevSecOps JSON reports & HTML artifacts
-│   └── security/                              # gate-01 through gate-07 reports & security-summary
-├── sonar-project.properties                   # SonarQube project analysis configuration
-├── Jenkinsfile                                # Component E: 13-Stage Enterprise CI/CD Pipeline
-├── start-architectiq.bat                      # Path-independent 31-option Windows Batch Launcher
-├── pytest.ini                                 # Pytest configuration
-├── requirements.txt                           # Backend Python dependencies
-└── README.md                                  # Enterprise architecture and operations manual
-```
+1. **Stateless In-Memory Architecture**: High-speed SimPy discrete-event simulation and NetworkX graph traversal with zero external database dependencies.
+2. **Automated Deployment & Health Probing**: One-click deployment script (`scripts/deploy/deploy-docker.ps1`) with progressive health checks across backend, frontend, and reverse proxy. Single-instance Docker Compose recreation incurs a brief ~1–3s cutover interruption.
+3. **Automated Rollback Guard**: If containers fail health checks within 60 seconds, `scripts/deploy/rollback-docker.ps1` immediately restores the last verified stable image tag recorded in `reports/deployments/last-known-good.json`.
+4. **Hybrid CI/CD Orchestration**: GitHub Actions on Windows self-hosted runner triggers Jenkins via authenticated REST API, streams progressive build logs, retrieves security summaries, and deploys containers.
+5. **Seven-Gate DevSecOps Framework**: Standardized scanning across secrets (TruffleHog), code quality (Bandit), IaC misconfigurations (Checkov), Dockerfile linting (Hadolint), dependency vulnerabilities (Snyk SaaS), DAST probing (OWASP ZAP), and Quality Gate evaluation (SonarCloud SaaS).
+6. **Resource-Safe Memory Guard**: Scanners dynamically inspect system RAM across Windows and Linux. Execution is guarded below `512.0 MB` with strict 30s-90s timeouts to prevent runaway processes.
+7. **Production Observability**: Native Prometheus metric exposition (`/metrics`) collecting latency histograms and HTTP status codes, mapped to automated Grafana monitoring dashboards.
 
 ---
 
-## 🌐 Port & Service Reference
+## 🌐 Port Matrix & Service Endpoints
 
-| Service | Container Name | Port | Description | Health Check |
-| :--- | :--- | :---: | :--- | :--- |
-| **Frontend UI** | `architectiq-frontend` | `80` | Web Dashboard & Reverse Proxy | `GET http://localhost/healthz` |
-| **Backend API** | `architectiq-backend` | `8000` | FastAPI Simulation & Optimization | `GET http://localhost:8000/health` |
-| **Prometheus** | `architectiq-prometheus`| `9090` | Metrics Collection & TSDB | `GET http://localhost:9090/-/healthy` |
-| **Grafana** | `architectiq-grafana` | `3001` | Dashboards & Visualizations | `GET http://localhost:3001/api/health` |
-| **Jenkins** | `devopsforge-jenkins` | `8081` | CI/CD Controller | `GET http://localhost:8081/login` |
-| **Jenkins Agent**| `devopsforge-jenkins` | `50000`| JNLP Inbound Agent Port | Port listener |
-| **SonarQube** | `architectiq-sonarqube`| `9000` | Code Quality & Security Server | `GET http://localhost:9000/api/system/status` |
-| **Kubernetes API**| `desktop-control-plane`| `6443` | Local Kubernetes Control Plane | `kubectl cluster-info` |
+| Port | Service | Container | Ingress URL | Health Check URL | Status |
+| :---: | :--- | :--- | :--- | :--- | :---: |
+| **80** | Nginx Web Frontend | `architectiq-frontend` | `http://localhost` | `http://localhost/healthz` | **UP** |
+| **8000** | FastAPI Application Backend | `architectiq-backend` | `http://localhost:8000` | `http://localhost:8000/health` | **UP** |
+| **3001** | Grafana Dashboard UI | `architectiq-grafana` | `http://localhost:3001` | `http://localhost:3001/api/health` | **UP** |
+| **9090** | Prometheus Server | `architectiq-prometheus` | `http://localhost:9090` | `http://localhost:9090/-/healthy` | **UP** |
+| **8081** | Jenkins CI/CD Controller | `devopsforge-jenkins` | `http://localhost:8081` | `http://localhost:8081/login` | **UP** |
 
 ---
 
-## 🛡️ DevSecOps 7 Essential Security Tools
+## 🚀 Quick Start Guide
 
-The framework integrates seven essential security tools with standardized reports in `reports/security/gate-0X-<tool>.json`:
-
-| Gate # | Name | Tool / Mechanism | Scope | Report File |
-| :---: | :--- | :--- | :--- | :--- |
-| **1** | Secret Detection | **TruffleHog** | Git repository and working tree secret leaks | `gate-01-trufflehog.json` |
-| **2** | Python SAST | **Bandit** | AST-based security scanning of `backend/` | `gate-02-bandit.json` |
-| **3** | IaC Security | **Checkov** | Terraform and Kubernetes misconfiguration scanning | `gate-03-checkov.json` |
-| **4** | Dockerfile Linting | **Hadolint** | Backend and frontend Dockerfile best practices | `gate-04-hadolint.json` |
-| **5** | Dependency Scanning | **Snyk** | Python & npm dependency vulnerabilities | `gate-05-snyk.json` |
-| **6** | DAST Baseline Scan | **OWASP ZAP** | Dynamic application testing of `http://localhost:8000` | `gate-06-zap.json` & `.html` |
-| **7** | Quality & Security | **SonarQube** | Static analysis & Quality Gate evaluation | `gate-07-sonarqube.json` |
-
-### Running Security Scans
+### 1. Run Automated Production Deployment
 ```powershell
-# Run all 7 security gates (STRICT mode blocks on policy failures)
-.\security\scripts\run-all-gates.ps1 -Mode STRICT
-
-# Run all 7 security gates in ADVISORY mode (audits without failing)
-.\security\scripts\run-all-gates.ps1 -Mode ADVISORY
-
-# Run an individual gate (e.g. Gate 2: Bandit)
-.\security\runners\run-bandit.ps1 -Mode STRICT
-
-# View aggregated security reports
-.\security\scripts\security-summary.ps1
+powershell -ExecutionPolicy Bypass -File scripts\deploy\deploy-docker.ps1 -ImageTag latest
 ```
 
----
-
-## 🔄 CI/CD Pipeline (`Jenkinsfile`)
-
-The enterprise Jenkins pipeline executes 13 dedicated stages with zero command masking or artificial test bypassing:
-
-1. **Checkout**: Repository retrieval and commit metadata resolution.
-2. **Backend Tests**: 122 automated pytest unit and integration tests with JUnit reporting.
-3. **Frontend Tests**: 13 automated Vitest/Node client and lifecycle regression tests.
-4. **Application Build**: Vite compilation into production distribution and Docker image builds.
-5. **TruffleHog (Gate 1)**: Git commit and filesystem secret scanning.
-6. **Bandit (Gate 2)**: Python backend static application security testing.
-7. **Checkov (Gate 3)**: Infrastructure as Code security evaluation for Terraform and Kubernetes.
-8. **Hadolint (Gate 4)**: Dockerfile security and syntax linting.
-9. **Snyk (Gate 5)**: Dependency vulnerability scanning for pip and npm packages.
-10. **SonarQube Analysis (Gate 7)**: Static code analysis execution via SonarScanner.
-11. **SonarQube Quality Gate (Gate 7)**: Project status validation against configured Quality Gate.
-12. **OWASP ZAP Baseline Scan (Gate 6)**: Dynamic baseline probing of local endpoints.
-13. **Security Report Aggregation**: Generation of `security-summary.json` and artifact archiving.
-
----
-
-## 🧪 Testing & Verification
-
-### Run Backend Pytest Suite (122 Tests)
+### 2. Manual Rollback to Last-Known-Good Tag
 ```powershell
-pytest
+powershell -ExecutionPolicy Bypass -File scripts\deploy\rollback-docker.ps1
 ```
-*Expected: 122 passed in ~158s*
 
-### Run Frontend Unit Tests (13 Tests)
+### 3. Run DevSecOps Security Gate Suite
 ```powershell
+# Advisory mode: Audits all gates and publishes summary without blocking
+python security\framework\seven_gates_runner.py --mode ADVISORY
+
+# Strict mode: Enforces quality gates; blocks on any policy failure or missing token
+python security\framework\seven_gates_runner.py --mode STRICT
+
+# View summary report
+python security\framework\seven_gates_runner.py --summary
+```
+
+### 4. Run Test Suites
+```powershell
+# Backend automated test suite (122 tests)
+pytest backend/tests/ -q
+
+# Frontend unit & regression suite (13 tests)
 npm --prefix frontend test
 ```
-*Expected: 13 passed in ~15s*
-
-### Run Platform Validation Suite
-```powershell
-.\scripts\validate-project.ps1
-```
-Runs validation across Docker Compose, Terraform syntax, Kubernetes manifests (dry-run), and Ansible YAML playbooks.
-
-### Run Comprehensive Platform Health Check
-```powershell
-.\scripts\health\check-all-services.ps1
-```
-*Expected: 6 of 6 platform components HEALTHY*
 
 ---
 
-## ⚠️ Architectural Isolation Rules & Policies
+## 🛡️ DevSecOps Seven Essential Security Gates
 
-1. **No External Database**: ArchitectIQ uses fast, optimized in-memory state models. No external database (Postgres, MySQL, Mongo) is required or started.
-2. **Application Isolation**: Monitoring tools, Jenkins agents, and security scanners are NEVER packaged inside application Docker images (`architectiq-backend` or `architectiq-frontend`).
-3. **Decoupled Lifecycle**: Starting the application (`docker-compose.yml` or Option 1) starts ONLY frontend and backend. Monitoring, Jenkins, and SonarQube do NOT start automatically.
-4. **Volume Preservation**: Data volumes (`architectiq-prometheus-data`, `architectiq-grafana-data`, `devopsforge_jenkins_home`, `architectiq-sonarqube-data`) are persistent and preserved across container restarts.
-5. **No Cloud Resource Modification**: The platform executes local validation and dry-runs; no cloud resources or paid infrastructure are created or destroyed.
+| Gate # | Scanner Tool | Target Scope | Output Artifact | Policy Verdict |
+| :---: | :--- | :--- | :--- | :---: |
+| **1** | **TruffleHog** | Git commit history and working tree leaks | `reports/security/gate-01-trufflehog.json` | **`PASS`** |
+| **2** | **Bandit** | Python AST security analysis (`backend/`) | `reports/security/gate-02-bandit.json` | **`PASS`** |
+| **3** | **Checkov** | Infrastructure-as-Code (`infrastructure/terraform`) | `reports/security/gate-03-checkov.json` | **`PASS`** |
+| **4** | **Hadolint** | Backend and frontend Dockerfiles | `reports/security/gate-04-hadolint.json` | **`PASS`** |
+| **5** | **Snyk** | Cloud SaaS dependency vulnerability engine | `reports/security/gate-05-snyk.json` | **`BLOCKED`** *(Token Req.)* |
+| **6** | **OWASP ZAP** | Baseline HTTP DAST probing against `:8000` | `reports/security/gate-06-zap.json` | **`PASS`** |
+| **7** | **SonarCloud** | Cloud SaaS code quality and security gate | `reports/security/gate-07-sonarqube.json` | **`BLOCKED`** *(Token Req.)* |
+
+*Note: In `ADVISORY` mode, missing cloud credentials truthfully register as `BLOCKED` with diagnostic guidance while allowing CI/CD to complete. In `STRICT` mode, missing credentials safely halt the pipeline.*
+
+---
+
+## 📚 Complete Documentation Suite
+
+- **[System Architecture Specification](docs/ARCHITECTURE.md)**: Deep dive into the SimPy engine, graph models, and Docker network topology.
+- **[REST API Reference Guide](docs/API_DOCUMENTATION.md)**: Schemas, payload examples, and responses for all simulation and optimization endpoints.
+- **[SRE & Operations Runbook](docs/RUNBOOK.md)**: Standard operating procedures for health probing, debugging, log streaming, and disaster recovery.
+- **[Automated Deployment Guide](docs/devops/DEPLOYMENT_GUIDE.md)**: Step-by-step rolling deployment and health verification.
+- **[Rollback & Recovery Guide](docs/devops/ROLLBACK_GUIDE.md)**: Stateful rollback procedures and volume protection.
+- **[Security & DevSecOps Guide](docs/devops/SECURITY_GUIDE.md)**: Seven gates, memory guardrails, and compliance enforcement.
+- **[CI/CD Pipeline Architecture](docs/devops/CICD_PIPELINE.md)**: Complete 14-stage Jenkins pipeline breakdown and GitHub Actions integration.
+- **[Troubleshooting Decision Tree](docs/devops/TROUBLESHOOTING.md)**: Diagnostic flowcharts and solutions for common operational issues.
