@@ -141,9 +141,9 @@ if ($composeRes.ExitCode -ne 0) {
 # ---------------------------------------------------------------------------
 Write-Host "`n[2/3] Performing post-rollback health verification..." -ForegroundColor Yellow
 $endpoints = @(
-    @{ Name = "Backend Health (/health)"; Url = "http://localhost:8000/health"; Expected = 200 },
-    @{ Name = "Frontend Healthz (/healthz)"; Url = "http://localhost:80/healthz"; Expected = 200 },
-    @{ Name = "Frontend-to-Backend Reverse Proxy (/health)"; Url = "http://localhost:80/health"; Expected = 200 }
+    @{ Name = "Backend Health (/health)"; Url = "http://127.0.0.1:8000/health"; Expected = 200 },
+    @{ Name = "Frontend Healthz (/healthz)"; Url = "http://127.0.0.1:80/healthz"; Expected = 200 },
+    @{ Name = "Frontend-to-Backend Reverse Proxy (/health)"; Url = "http://127.0.0.1:80/health"; Expected = 200 }
 )
 
 $start = [DateTime]::UtcNow

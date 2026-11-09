@@ -127,13 +127,13 @@ function Invoke-NativeDocker {
 Write-Host "`n[2/5] Verifying Docker Engine connectivity..." -ForegroundColor Yellow
 
 # If DOCKER_HOST is not set and default named pipe fails, check desktop-linux pipe
-$infoRes = Invoke-NativeDocker -Arguments @("info")
+$infoRes = Invoke-NativeDocker -Arguments @("version")
 if ($infoRes.ExitCode -ne 0) {
     Write-Host "Default Docker Engine connection failed. Probing Docker Desktop Linux pipe..." -ForegroundColor Yellow
     if (Test-Path "\\.\pipe\dockerDesktopLinuxEngine" -ErrorAction SilentlyContinue) {
         $env:DOCKER_HOST = "npipe:////./pipe/dockerDesktopLinuxEngine"
         Write-Host "Configured DOCKER_HOST to npipe:////./pipe/dockerDesktopLinuxEngine" -ForegroundColor Cyan
-        $infoRes = Invoke-NativeDocker -Arguments @("info")
+        $infoRes = Invoke-NativeDocker -Arguments @("version")
     }
 }
 
@@ -143,8 +143,7 @@ if ($infoRes.ExitCode -ne 0) {
     $infoRes.Output | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     Write-Host "`nActionable Guidance:" -ForegroundColor Yellow
     Write-Host "1. Verify Docker Desktop is running." -ForegroundColor Yellow
-    Write-Host "2. If executing as a Windows service account (e.g. NETWORK SERVICE), the service account lacks access to Docker Desktop's named pipe." -ForegroundColor Yellow
-    Write-Host "   Configure the service to run as the local user account (or interactively via run.cmd)." -ForegroundColor Yellow
+    Write-Host "2. If executing as a Windows service account (e.g. NETWORK SERVICE), ensure named pipe DACL includes the account." -ForegroundColor Yellow
     exit 1
 }
 
@@ -253,9 +252,9 @@ if ($composeDeploy.ExitCode -ne 0) {
 # ---------------------------------------------------------------------------
 Write-Host "`n[5/5] Performing post-deployment health verification..." -ForegroundColor Yellow
 $endpoints = @(
-    @{ Name = "Backend Health (/health)"; Url = "http://localhost:8000/health"; Expected = 200 },
-    @{ Name = "Frontend Healthz (/healthz)"; Url = "http://localhost:80/healthz"; Expected = 200 },
-    @{ Name = "Frontend-to-Backend Reverse Proxy (/health)"; Url = "http://localhost:80/health"; Expected = 200 }
+    @{ Name = "Backend Health (/health)"; Url = "http://127.0.0.1:8000/health"; Expected = 200 },
+    @{ Name = "Frontend Healthz (/healthz)"; Url = "http://127.0.0.1:80/healthz"; Expected = 200 },
+    @{ Name = "Frontend-to-Backend Reverse Proxy (/health)"; Url = "http://127.0.0.1:80/health"; Expected = 200 }
 )
 
 $start = [DateTime]::UtcNow

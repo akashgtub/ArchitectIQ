@@ -1,7 +1,7 @@
 ﻿{
-    "Timestamp":  "2026-11-09T06:14:56Z",
-    "ImageTag":  "24-4092cf1",
+    "Timestamp":  "2026-11-09T07:00:08Z",
+    "ImageTag":  "25-c2cd81b",
     "Registry":  "architectiq",
     "Status":  "SUCCESS",
-    "CommitSha":  "4092cf131c26544688ac5afaa73736c93f978f48"
+    "CommitSha":  "ae466eb97ae881f7d455a331f815b794c73f5e54"
 }

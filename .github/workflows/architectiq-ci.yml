@@ -37,16 +37,21 @@ jobs:
     name: Execute ArchitectIQ Pipeline via Local Jenkins
     # Dedicated self-hosted Windows runner registered to the ArchitectIQ repository
     runs-on: [self-hosted, Windows, architectiq]
+    env:
+      GIT_CONFIG_PARAMETERS: "'safe.directory=*'"
 
     steps:
+      - name: 0. Pre-configure Git Safe Directory
+        shell: powershell
+        run: |
+          git config --global --add safe.directory "*"
+          git config --global --add safe.directory "C:/actions-runner/_work/ArchitectIQ/ArchitectIQ"
+
       - name: 1. Checkout Trusted Source Code
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-
-      - name: Configure Git Safe Directory
-        shell: powershell
-        run: git config --global --add safe.directory "*"
+          clean: true
 
       - name: 2. Verify Jenkins Controller Health (localhost:8081)
         shell: powershell
