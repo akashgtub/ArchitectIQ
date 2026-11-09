@@ -48,6 +48,7 @@ function Find-DockerExecutable {
 
     # 2. Check standard system-wide installation locations
     $candidates = @(
+        "C:\ProgramData\DockerDesktop\resources\bin\docker.exe",
         (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe"),
         (Join-Path $env:ProgramFiles "Docker\resources\bin\docker.exe")
     )
@@ -95,6 +96,12 @@ Write-Host "Resolved Docker CLI: $dockerExe" -ForegroundColor Green
 $dockerDir = Split-Path $dockerExe -Parent
 if ($env:PATH -notlike "*$dockerDir*") {
     $env:PATH = "$dockerDir;" + $env:PATH
+}
+
+# If DOCKER_CONFIG is not set and ProgramData shared config exists, configure it
+if (-not $env:DOCKER_CONFIG -and (Test-Path "C:\ProgramData\DockerDesktop\.docker")) {
+    $env:DOCKER_CONFIG = "C:\ProgramData\DockerDesktop\.docker"
+    Write-Host "Configured DOCKER_CONFIG to C:\ProgramData\DockerDesktop\.docker" -ForegroundColor Gray
 }
 
 # Helper function to invoke Docker safely without PowerShell NativeCommandError on stderr warnings

@@ -37,6 +37,7 @@ function Find-DockerExecutable {
     }
 
     $candidates = @(
+        "C:\ProgramData\DockerDesktop\resources\bin\docker.exe",
         (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe"),
         (Join-Path $env:ProgramFiles "Docker\resources\bin\docker.exe")
     )
@@ -72,6 +73,10 @@ if (-not $dockerExe) {
 $dockerDir = Split-Path $dockerExe -Parent
 if ($env:PATH -notlike "*$dockerDir*") {
     $env:PATH = "$dockerDir;" + $env:PATH
+}
+
+if (-not $env:DOCKER_CONFIG -and (Test-Path "C:\ProgramData\DockerDesktop\.docker")) {
+    $env:DOCKER_CONFIG = "C:\ProgramData\DockerDesktop\.docker"
 }
 
 function Invoke-NativeDocker {
