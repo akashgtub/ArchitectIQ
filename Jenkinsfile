@@ -312,32 +312,28 @@ except Exception as e:
                 echo ">>> Stage 14: Aggregating all 7 security gates and evaluating enforcement policy (${params.SECURITY_ENFORCEMENT_MODE})..."
                 sh '''
                     python security/framework/seven_gates_runner.py --summary --mode ${SECURITY_ENFORCEMENT_MODE}
+                    python -c "
+import json, sys
+with open('reports/security/security-summary.json') as f:
+    data = json.load(f)
+mode = '${SECURITY_ENFORCEMENT_MODE}'
+verdict = data.get('overall_verdict', 'UNKNOWN')
+passed = data.get('passed_gates', 0)
+failed = data.get('failed_gates', 0)
+blocked = data.get('blocked_gates', 0)
+print('=' * 50)
+print('DevSecOps Policy Enforcement Summary:')
+print(f'  Enforcement Mode: {mode}')
+print(f'  Overall Verdict:  {verdict}')
+print(f'  Passed Gates:     {passed}')
+print(f'  Failed Gates:     {failed}')
+print(f'  Blocked Gates:    {blocked}')
+print('=' * 50)
+if mode == 'STRICT' and verdict != 'PASS':
+    print(f'STRICT SECURITY POLICY ENFORCEMENT FAILURE: Overall security gate verdict is {verdict}. Deployment authorization is BLOCKED.', file=sys.stderr)
+    sys.exit(1)
+"
                 '''
-                script {
-                    def summaryFile = 'reports/security/security-summary.json'
-                    if (fileExists(summaryFile)) {
-                        def summaryText = readFile(summaryFile)
-                        echo "Security Summary JSON:\n${summaryText}"
-                        def summary = readJSON file: summaryFile
-
-                        echo "=================================================="
-                        echo "DevSecOps Policy Enforcement Summary:"
-                        echo "  Enforcement Mode: ${params.SECURITY_ENFORCEMENT_MODE}"
-                        echo "  Overall Verdict:  ${summary.overall_verdict}"
-                        echo "  Passed Gates:     ${summary.passed_gates}"
-                        echo "  Failed Gates:     ${summary.failed_gates}"
-                        echo "  Blocked Gates:    ${summary.blocked_gates}"
-                        echo "=================================================="
-
-                        if (params.SECURITY_ENFORCEMENT_MODE == 'STRICT') {
-                            if (summary.overall_verdict != 'PASS') {
-                                error("STRICT SECURITY POLICY ENFORCEMENT FAILURE: Overall security gate verdict is '${summary.overall_verdict}'. Deployment authorization is BLOCKED.")
-                            }
-                        }
-                    } else {
-                        error("FATAL: Security summary report '${summaryFile}' was not generated.")
-                    }
-                }
             }
             post {
                 always {
