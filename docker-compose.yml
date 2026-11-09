@@ -6,6 +6,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    image: ${REGISTRY_REPO:-architectiq}/backend:${IMAGE_TAG:-latest}
     container_name: architectiq-backend
     restart: unless-stopped
     ports:
@@ -41,6 +42,7 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+    image: ${REGISTRY_REPO:-architectiq}/frontend:${IMAGE_TAG:-latest}
     container_name: architectiq-frontend
     restart: unless-stopped
     ports:

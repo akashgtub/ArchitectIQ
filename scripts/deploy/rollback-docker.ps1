@@ -2,6 +2,7 @@
 .SYNOPSIS
     Automated Docker Compose rollback script for ArchitectIQ.
 .DESCRIPTION
+    - Robust, environment-aware Docker executable resolution.
     - Restores the last-known-good (or specified) container image tag using Docker Compose.
     - Validates post-rollback health across backend (:8000), frontend (:80), and reverse proxy.
     - Preserves existing volumes (Prometheus, Grafana, Jenkins) and network (architectiq-network).
@@ -21,6 +22,73 @@ Set-Location $RepoRoot
 Write-Host "============================================================" -ForegroundColor Magenta
 Write-Host "      ArchitectIQ Automated Docker Compose Rollback         " -ForegroundColor Magenta
 Write-Host "============================================================" -ForegroundColor Magenta
+Write-Host "Execution User:    $([System.Environment]::UserDomainName)\$([System.Environment]::UserName)" -ForegroundColor Gray
+
+# ---------------------------------------------------------------------------
+# 1. Environment-Aware Docker Executable Resolution
+# ---------------------------------------------------------------------------
+function Find-DockerExecutable {
+    $cmd = Get-Command "docker.exe" -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $cmd = Get-Command "docker" -ErrorAction SilentlyContinue
+    }
+    if ($cmd -and $cmd.Source -and (Test-Path $cmd.Source)) {
+        return $cmd.Source
+    }
+
+    $candidates = @(
+        (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe"),
+        (Join-Path $env:ProgramFiles "Docker\resources\bin\docker.exe")
+    )
+    if ($env:ProgramW6432) {
+        $candidates += (Join-Path $env:ProgramW6432 "Docker\Docker\resources\bin\docker.exe")
+    }
+    if ($env:LOCALAPPDATA) {
+        $candidates += (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin\docker.exe")
+    }
+    if ($env:USERPROFILE) {
+        $candidates += (Join-Path $env:USERPROFILE "AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe")
+    }
+    $userDirs = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue
+    if ($userDirs) {
+        foreach ($u in $userDirs) {
+            $candidates += (Join-Path $u.FullName "AppData\Local\Programs\DockerDesktop\resources\bin\docker.exe")
+        }
+    }
+    foreach ($path in $candidates) {
+        if ($path -and (Test-Path $path -ErrorAction SilentlyContinue)) {
+            return $path
+        }
+    }
+    return $null
+}
+
+$dockerExe = Find-DockerExecutable
+if (-not $dockerExe) {
+    Write-Host "[FATAL] Docker executable (docker.exe) could not be resolved." -ForegroundColor Red
+    exit 1
+}
+
+$dockerDir = Split-Path $dockerExe -Parent
+if ($env:PATH -notlike "*$dockerDir*") {
+    $env:PATH = "$dockerDir;" + $env:PATH
+}
+
+function Invoke-NativeDocker {
+    param([string[]]$Arguments)
+    $origEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $lines = & $dockerExe @Arguments 2>&1
+        $code = $LASTEXITCODE
+        return [PSCustomObject]@{
+            Output   = $lines
+            ExitCode = $code
+        }
+    } finally {
+        $ErrorActionPreference = $origEap
+    }
+}
 
 $historyDir = Join-Path $RepoRoot "reports\deployments"
 $stateFile = Join-Path $historyDir "last-known-good.json"
@@ -47,19 +115,25 @@ Write-Host "Health Timeout:            ${TimeoutSec}s" -ForegroundColor White
 Write-Host "Compose Root:              $RepoRoot" -ForegroundColor Gray
 Write-Host "------------------------------------------------------------" -ForegroundColor Gray
 
-# 1. Set Environment Variables for Compose
+# ---------------------------------------------------------------------------
+# 2. Redeploy Target Version via Compose
+# ---------------------------------------------------------------------------
 $env:IMAGE_TAG = $RollbackTag
 $env:REGISTRY_REPO = $Registry
 
 Write-Host "`n[1/3] Redeploying target container version '$RollbackTag'..." -ForegroundColor Yellow
 $upArgs = @("compose", "-f", "docker-compose.yml", "up", "-d")
-$proc = Start-Process -FilePath "docker" -ArgumentList $upArgs -NoNewWindow -Wait -PassThru
-if ($proc.ExitCode -ne 0) {
-    Write-Host "[ERROR] Docker Compose rollback command failed with exit code $($proc.ExitCode)." -ForegroundColor Red
-    exit 1
+$composeRes = Invoke-NativeDocker -Arguments $upArgs
+$composeRes.Output | ForEach-Object { Write-Host "  $_" -ForegroundColor White }
+
+if ($composeRes.ExitCode -ne 0) {
+    Write-Host "[ERROR] Docker Compose rollback command failed with exit code $($composeRes.ExitCode)." -ForegroundColor Red
+    exit $composeRes.ExitCode
 }
 
-# 2. Post-Rollback Health Probing
+# ---------------------------------------------------------------------------
+# 3. Post-Rollback Health Probing
+# ---------------------------------------------------------------------------
 Write-Host "`n[2/3] Performing post-rollback health verification..." -ForegroundColor Yellow
 $endpoints = @(
     @{ Name = "Backend Health (/health)"; Url = "http://localhost:8000/health"; Expected = 200 },
@@ -97,7 +171,9 @@ if (-not $allHealthy) {
     exit 1
 }
 
-# 3. Log Rollback Record
+# ---------------------------------------------------------------------------
+# 4. Log Rollback Record
+# ---------------------------------------------------------------------------
 Write-Host "`n[3/3] Rollback health checks passed successfully!" -ForegroundColor Green
 if (-not (Test-Path $historyDir)) {
     New-Item -ItemType Directory -Path $historyDir -Force | Out-Null
@@ -122,4 +198,3 @@ Write-Host "============================================================" -Foreg
 Write-Host "   Rollback to ArchitectIQ '$RollbackTag' Completed: SUCCESS " -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Green
 exit 0
-

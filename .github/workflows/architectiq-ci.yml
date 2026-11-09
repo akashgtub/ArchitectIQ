@@ -57,6 +57,7 @@ jobs:
           }
 
       - name: 3. Trigger and Track Jenkins Pipeline Execution
+        id: jenkins
         shell: powershell
         env:
           JENKINS_USER: ${{ secrets.JENKINS_USER || 'cicd-bot' }}
@@ -95,5 +96,25 @@ jobs:
         if: success()
         shell: powershell
         run: |
-          Write-Host "Jenkins pipeline passed all security gates. Proceeding with Docker Compose deployment..." -ForegroundColor Green
-          & .\scripts\deploy\deploy-docker.ps1 -ImageTag "latest" -TimeoutSec 60
+          Write-Host "Jenkins pipeline passed all security gates. Resolving verified release tag..." -ForegroundColor Green
+          $tag = "${{ steps.jenkins.outputs.release_tag }}"
+          if (-not $tag) {
+            $manifestPath = "reports\deployments\build-manifest.json"
+            if (Test-Path $manifestPath) {
+              $m = Get-Content $manifestPath -Raw | ConvertFrom-Json
+              $tag = $m.release_tag
+            }
+          }
+          if (-not $tag) {
+            $lkgPath = "reports\deployments\last-known-good.json"
+            if (Test-Path $lkgPath) {
+              $lkg = Get-Content $lkgPath -Raw | ConvertFrom-Json
+              $tag = $lkg.ImageTag
+            }
+          }
+          if (-not $tag) {
+            Write-Error "Could not resolve immutable release tag from Jenkins build artifacts."
+            exit 1
+          }
+          Write-Host "Deploying verified immutable release tag: $tag" -ForegroundColor Cyan
+          & .\scripts\deploy\deploy-docker.ps1 -ImageTag $tag -TimeoutSec 60

@@ -354,23 +354,30 @@ Write-Host "   Jenkins Pipeline Finished. Build Result: $finalResult    " -Foreg
 Write-Host "============================================================" -ForegroundColor Cyan
 
 # ---------------------------------------------------------------------------
-# 6. Retrieve Archived Security Reports via Authenticated REST API
+# 6. Retrieve Archived Security Reports & Release Manifests via Authenticated REST API
 # ---------------------------------------------------------------------------
-Write-Host "`n[5/5] Retrieving archived security reports from Jenkins build..." -ForegroundColor Yellow
+Write-Host "`n[5/5] Retrieving archived security reports & release manifests from Jenkins build..." -ForegroundColor Yellow
 
 $reportsTargetDir = Join-Path $RepoRoot "reports\security"
+$deployTargetDir = Join-Path $RepoRoot "reports\deployments"
 if (-not (Test-Path $reportsTargetDir)) {
     New-Item -ItemType Directory -Path $reportsTargetDir -Force | Out-Null
 }
+if (-not (Test-Path $deployTargetDir)) {
+    New-Item -ItemType Directory -Path $deployTargetDir -Force | Out-Null
+}
 
 $artifactsToFetch = @(
-    "reports/security/security-summary.md",
-    "reports/security/security-summary.json"
+    @{ Remote = "reports/security/security-summary.md"; Local = (Join-Path $reportsTargetDir "security-summary.md") },
+    @{ Remote = "reports/security/security-summary.json"; Local = (Join-Path $reportsTargetDir "security-summary.json") },
+    @{ Remote = "reports/deployments/build-manifest.json"; Local = (Join-Path $deployTargetDir "build-manifest.json") },
+    @{ Remote = "reports/deployments/last-known-good.json"; Local = (Join-Path $deployTargetDir "last-known-good.json") }
 )
 
-foreach ($art in $artifactsToFetch) {
-    $artFileName = Split-Path $art -Leaf
-    $destinationFile = Join-Path $reportsTargetDir $artFileName
+foreach ($item in $artifactsToFetch) {
+    $art = $item.Remote
+    $destinationFile = $item.Local
+    $artFileName = Split-Path $destinationFile -Leaf
     $artifactDownloadUrl = "${activeBuildUrl}artifact/${art}"
     
     try {
@@ -386,8 +393,40 @@ foreach ($art in $artifactsToFetch) {
         Set-Content -Path $destinationFile -Value $artContent -Encoding UTF8 -Force
         Write-Host "  Retrieved: $artFileName -> $destinationFile" -ForegroundColor Green
     } catch {
-        Write-Host "  [WARNING] Could not retrieve artifact '$art' from Jenkins build: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  [NOTICE] Artifact '$art' download status: $($_.Exception.Message)" -ForegroundColor Gray
     }
+}
+
+# Resolve and emit release tag from downloaded manifest
+$resolvedReleaseTag = $null
+$localManifest = Join-Path $deployTargetDir "build-manifest.json"
+if (Test-Path $localManifest) {
+    try {
+        $mObj = Get-Content $localManifest -Raw | ConvertFrom-Json
+        if ($mObj.release_tag) {
+            $resolvedReleaseTag = $mObj.release_tag
+            Write-Host "  Discovered verified release tag from Jenkins build: '$resolvedReleaseTag'" -ForegroundColor Green
+        }
+    } catch {}
+}
+
+if (-not $resolvedReleaseTag) {
+    $localLkg = Join-Path $deployTargetDir "last-known-good.json"
+    if (Test-Path $localLkg) {
+        try {
+            $lkgObj = Get-Content $localLkg -Raw | ConvertFrom-Json
+            if ($lkgObj.ImageTag) {
+                $resolvedReleaseTag = $lkgObj.ImageTag
+                Write-Host "  Discovered release tag from last-known-good state: '$resolvedReleaseTag'" -ForegroundColor Green
+            }
+        } catch {}
+    }
+}
+
+if ($resolvedReleaseTag -and $env:GITHUB_OUTPUT) {
+    "release_tag=$resolvedReleaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+    "build_number=$activeBuildNum" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+    Write-Host "  Exported release_tag='$resolvedReleaseTag' to GITHUB_OUTPUT" -ForegroundColor Cyan
 }
 
 # ---------------------------------------------------------------------------
