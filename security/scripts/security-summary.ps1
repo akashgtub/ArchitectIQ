@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Displays DevSecOps Security Framework summary across all 7 essential tools.
+    Displays DevSecOps Security Framework summary across all 5 essential tools.
 #>
 $ErrorActionPreference = "Continue"
 
@@ -9,10 +9,10 @@ $SummaryJson = Join-Path $RepoRoot "reports\security\security-summary.json"
 $SummaryMd = Join-Path $RepoRoot "reports\security\security-summary.md"
 $VenvPy = Join-Path $RepoRoot "security\.venv\Scripts\python.exe"
 $PyCmd = if (Test-Path $VenvPy) { $VenvPy } else { "python" }
-$RunnerPy = Join-Path $RepoRoot "security\framework\seven_gates_runner.py"
+$RunnerPy = Join-Path $RepoRoot "security\framework\five_gates_runner.py"
 
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "      ArchitectIQ 7 Essential Security Gates Summary         " -ForegroundColor Cyan
+Write-Host "      ArchitectIQ 5 Essential Security Gates Summary         " -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 
 # Ensure summary is freshly aggregated

@@ -1,8 +1,7 @@
 ﻿{
-    "Timestamp":  "2026-11-08T14:44:26Z",
+    "Timestamp":  "2026-11-09T04:48:52Z",
     "ImageTag":  "latest",
     "Registry":  "architectiq",
-    "Status":  "ROLLED_BACK",
-    "TriggeredBy":  "Automated/Manual Rollback Procedure",
-    "CommitSha":  "bf6953b31701fb862fa038e577423b71424729de"
+    "Status":  "SUCCESS",
+    "CommitSha":  "88f2079a60fcab37a15c400ecb625ca8b2f02415"
 }

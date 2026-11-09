@@ -47,17 +47,15 @@
 | **11. DevSecOps: Gate 2** | Bandit (Python SAST) | **Verified** | Scans `backend/`. 0 High/Critical security issues detected. Status: `PASS`. |
 | **12. DevSecOps: Gate 3** | Checkov (IaC SAST) | **Verified** | Scans `infrastructure/terraform`. Clean output evaluated. Status: `PASS`. |
 | **13. DevSecOps: Gate 4** | Hadolint (Docker Lint) | **Verified** | Scans backend and frontend Dockerfiles. Clean output evaluated. Status: `PASS`. |
-| **14. DevSecOps: Gate 5** | Snyk (Dependency SCA) | **Verified** | SaaS integration with `api.snyk.io`. Reports `BLOCKED` truthfully when token is absent. |
-| **15. DevSecOps: Gate 6** | OWASP ZAP Baseline Prober | **Verified** | In-process Python HTTP security prober against FastAPI backend. Status: `PASS`. |
-| **16. DevSecOps: Gate 7** | SonarCloud (Code Quality) | **Verified** | Configured for `sonarcloud.io`. Reports `BLOCKED` truthfully when token is absent. |
-| **17. Resource Safety** | RAM Guard & Timeouts | **Verified** | Cross-platform RAM threshold (512 MB) and process timeouts (30-90s) prevent host overload. |
-| **18. Security Policies** | STRICT vs ADVISORY | **Verified** | `STRICT` halts pipeline on failures; `ADVISORY` produces full diagnostic reports. |
-| **19. Infrastructure as Code** | Terraform (AWS) | **Verified** | `terraform fmt -check` and `terraform validate` both passing. Cost-guarded (Rule 3). |
-| **20. Configuration Management** | Ansible (YAML Syntax) | **Verified** | 13/13 YAML files in `infrastructure/ansible/` verified 100% syntactically valid. |
-| **21. Observability: Metrics** | Prometheus Server | **Verified** | Container `architectiq-prometheus` (:9090). 3/3 active targets `up` and collecting metrics. |
-| **22. Observability: Visual** | Grafana Dashboards | **Verified** | Container `architectiq-grafana` (:3001). Dashboard `architectiq-overview.json` active. |
-| **23. Automated Deployment** | PowerShell Docker Deploy | **Verified** | `scripts/deploy/deploy-docker.ps1` executes rolling update & verifies 3 endpoints. |
-| **24. Automated Rollback** | PowerShell Docker Rollback | **Verified** | `scripts/deploy/rollback-docker.ps1` restores `last-known-good.json` in ~8s. |
+| **14. DevSecOps: Gate 5** | OWASP ZAP Baseline Prober | **Verified** | In-process Python HTTP security prober against FastAPI backend (:8000). Status: `PASS`. |
+| **15. Resource Safety** | RAM Guard & Timeouts | **Verified** | Cross-platform RAM threshold (512 MB) and process timeouts (30-90s) prevent host overload. |
+| **16. Security Policies** | STRICT vs ADVISORY | **Verified** | `STRICT` halts pipeline on failures; `ADVISORY` produces full diagnostic reports. |
+| **17. Infrastructure as Code** | Terraform (AWS) | **Verified** | `terraform fmt -check` and `terraform validate` both passing. Cost-guarded (Rule 3). |
+| **18. Configuration Management** | Ansible (YAML Syntax) | **Verified** | 13/13 YAML files in `infrastructure/ansible/` verified 100% syntactically valid. |
+| **19. Observability: Metrics** | Prometheus Server | **Verified** | Container `architectiq-prometheus` (:9090). 3/3 active targets `up` and collecting metrics. |
+| **20. Observability: Visual** | Grafana Dashboards | **Verified** | Container `architectiq-grafana` (:3001). Dashboard `architectiq-overview.json` active. |
+| **21. Automated Deployment** | PowerShell Docker Deploy | **Verified** | `scripts/deploy/deploy-docker.ps1` executes rolling update & verifies 3 endpoints. |
+| **22. Automated Rollback** | PowerShell Docker Rollback | **Verified** | `scripts/deploy/rollback-docker.ps1` restores `last-known-good.json` in ~8s. |
 
 ---
 

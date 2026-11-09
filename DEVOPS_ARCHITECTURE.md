@@ -125,11 +125,8 @@ The CI/CD pipeline enforces clear separation of concerns between GitHub Actions 
    ├── Stage 6: Gate 2 — Bandit Python SAST (0 Critical/High findings)
    ├── Stage 7: Gate 3 — Checkov IaC Security (Terraform scanning)
    ├── Stage 8: Gate 4 — Hadolint Dockerfile Security Linting
-   ├── Stage 9: Gate 5 — Snyk Dependency Vulnerability Scanning (SaaS)
-   ├── Stage 10: Gate 7 — SonarCloud Static Code Analysis (SaaS)
-   ├── Stage 11: Gate 7 — SonarCloud Quality Gate Status Evaluation
-   ├── Stage 12: Gate 6 — OWASP ZAP Baseline DAST Security Probing
-   └── Stage 13: DevSecOps Security Report Aggregation & Archival
+   ├── Stage 9: Gate 5 — OWASP ZAP Baseline DAST Security Probing
+   └── Stage 10: DevSecOps Security Report Aggregation & Archival
                  │
                  ▼
 [5. Post-Build Deployment & Verification (Docker Compose)]
@@ -146,15 +143,14 @@ The CI/CD pipeline enforces clear separation of concerns between GitHub Actions 
 To prevent host freezing on the 8 GB Windows machine, security scanners operate under strict resource safeguards:
 
 1. **Cross-Platform Available RAM Guard**:
-   - Integrated `get_system_memory_info()` in [seven_gates_runner.py](file:///C:/ArchitectIQ/security/framework/seven_gates_runner.py) detects Windows host (`GlobalMemoryStatusEx`) and Linux/Docker container memory (`/proc/meminfo`).
+   - Integrated `get_system_memory_info()` in [five_gates_runner.py](file:///C:/ArchitectIQ/security/framework/five_gates_runner.py) detects Windows host (`GlobalMemoryStatusEx`) and Linux/Docker container memory (`/proc/meminfo`).
    - Configurable minimum threshold: `MIN_RAM_THRESHOLD_MB = 512 MB`. If available memory drops below this limit, scanner execution halts with `BLOCKED — LOW MEMORY SAFEGUARD TRIGGERED`.
 2. **Sequential Execution & Timeouts**:
    - Scanners execute sequentially, never in parallel.
    - Individual process-tree timeouts (30s to 90s) with guaranteed child-process termination (`taskkill /F /T` on Windows; `killpg` on POSIX).
-3. **Hosted SaaS Migration**:
-   - Local SonarQube container is permanently stopped (saving ~2.5 GB RAM).
-   - Gate 7 connects to SonarCloud (`https://sonarcloud.io`) free tier.
-   - Gate 5 connects to Snyk SaaS (`https://api.snyk.io`) free tier.
+3. **Decoupled Architecture**:
+   - Local SonarQube container is permanently removed (saving ~2.5 GB RAM).
+   - Five essential, fast scanners operate with zero cloud credential dependencies.
 4. **Zero Token Exposure**:
    - Tokens are passed via subshell environment variables only, never command-line flags or logs.
 

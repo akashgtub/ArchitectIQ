@@ -1,6 +1,6 @@
-<#
+﻿<#
 .SYNOPSIS
-    Runs Gate 6: OWASP ZAP — Dynamic Application Security Testing (DAST).
+    Runs Gate 5: OWASP ZAP — Dynamic Application Security Testing (DAST).
 .PARAMETER Mode
     STRICT or ADVISORY (default: STRICT)
 .PARAMETER TargetUrl
@@ -16,13 +16,13 @@ $ErrorActionPreference = "Continue"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $VenvPy = Join-Path $RepoRoot "security\.venv\Scripts\python.exe"
 $PyCmd = if (Test-Path $VenvPy) { $VenvPy } else { "python" }
-$RunnerPy = Join-Path $RepoRoot "security\framework\seven_gates_runner.py"
+$RunnerPy = Join-Path $RepoRoot "security\framework\five_gates_runner.py"
 
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "   Executing Gate 6: OWASP ZAP (DAST Baseline Testing)      " -ForegroundColor Cyan
+Write-Host "   Executing Gate 5: OWASP ZAP (DAST Baseline Testing)      " -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "Target Environment: $TargetUrl" -ForegroundColor Yellow
 
-& $PyCmd $RunnerPy --gate 6 --mode $Mode --target-url $TargetUrl
+& $PyCmd $RunnerPy --gate 5 --mode $Mode --target-url $TargetUrl
 exit $LASTEXITCODE
 

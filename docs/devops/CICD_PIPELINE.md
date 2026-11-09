@@ -35,24 +35,25 @@ ArchitectIQ implements an enterprise hybrid CI/CD pipeline combining **GitHub Ac
 
 ---
 
-## 2. Jenkins Pipeline 14-Stage Breakdown
+## 2. Jenkins Pipeline 15-Stage Breakdown
 
 | Stage # | Stage Name | Operations & Guardrails |
 | :---: | :--- | :--- |
-| **1** | **Checkout** | Clones source, extracts short commit SHA, sets displayName (`#<BUILD>-<SHA>`), and tags build. |
-| **2** | **Backend Tests** | Executes 122 Pytest automated tests covering simulation, optimizer, and chaos engines (`--junitxml`). |
-| **3** | **Frontend Tests** | Executes 13 Node unit and regression tests confirming state lifecycle and UI gatekeepers. |
-| **4** | **Application Build** | Compiles Vite production bundle (`frontend/dist`) and builds Docker images for backend and frontend. |
-| **5** | **TruffleHog (Gate 1)** | Scans repository and history for committed secrets, credentials, and API keys. |
-| **6** | **Bandit (Gate 2)** | Executes Python AST static security analysis on `backend/` source tree. |
-| **7** | **Checkov (Gate 3)** | Scans Infrastructure-as-Code definitions in `infrastructure/terraform/` for cloud security misconfigurations. |
-| **8** | **Hadolint (Gate 4)** | Lints backend and frontend Dockerfiles against container security best practices. |
-| **9** | **Snyk (Gate 5)** | Scans application dependencies via Snyk Cloud SaaS engine using Jenkins credential `snyk-token`. |
-| **10** | **SonarQube Analysis (Gate 7)** | Executes static code analysis and transmits findings to hosted SonarCloud engine using `sonar-token`. |
-| **11** | **SonarQube Quality Gate (Gate 7)** | Evaluates SonarCloud Quality Gate status (`PASS`, `FAIL`, or `BLOCKED`). |
-| **12** | **OWASP ZAP (Gate 6)** | Performs automated baseline DAST probing against the local backend endpoint (`:8000`). |
-| **13** | **Security Report Aggregation** | Aggregates all gate reports into `security-summary.json` and `security-summary.md`; archives artifacts. |
-| **14** | **Image Verification & Deployment Gate** | Inspects built container images, validates metadata, and generates `reports/deployments/build-manifest.json`. |
+| **1** | **Checkout** | Clones trusted source from Git SCM (`refs/heads/main`). |
+| **2** | **Build Metadata** | Extracts short commit SHA, sets displayName (`#<BUILD_NUMBER>-<SHORT_COMMIT>`), and validates build tag. |
+| **3** | **Backend Tests** | Executes 122 Pytest automated tests covering simulation, optimizer, and chaos engines (`--junitxml`). |
+| **4** | **Frontend Tests** | Executes 13 Node unit and regression tests confirming state lifecycle and UI gatekeepers, plus `npm audit`. |
+| **5** | **Application Build** | Compiles Vite production bundle (`frontend/dist`) and builds Docker images using BuildKit (`DOCKER_BUILDKIT=1`). |
+| **6** | **TruffleHog (Gate 1)** | Scans repository and history for committed secrets, credentials, and API keys. |
+| **7** | **Bandit (Gate 2)** | Executes Python AST static security analysis on `backend/` source tree. |
+| **8** | **Checkov (Gate 3)** | Scans Infrastructure-as-Code definitions in `infrastructure/terraform/` for cloud security misconfigurations. |
+| **9** | **Hadolint (Gate 4)** | Lints backend and frontend Dockerfiles against container security best practices. |
+| **10** | **OWASP ZAP (Gate 5)** | Performs automated baseline DAST probing against the local backend endpoint (`:8000`). |
+| **11** | **Security Policy Evaluation** | Aggregates 5 gate reports into `security-summary.json` and evaluates STRICT vs ADVISORY mode; archives artifacts. |
+| **12** | **Docker Image Verification** | Inspects built container images, validates metadata, and generates `reports/deployments/build-manifest-${IMAGE_TAG}.json`. |
+| **13** | **Deployment Approval** | Automatically approves non-production; requires explicit interactive sign-off for production. |
+| **14** | **Deployment** | Records release to `last-known-good.json` and appends to `deployment-history.jsonl`. |
+| **15** | **Health Checks** | Verifies live application and observability endpoints (`/health`, `/healthz`, reverse proxy). |
 
 ---
 

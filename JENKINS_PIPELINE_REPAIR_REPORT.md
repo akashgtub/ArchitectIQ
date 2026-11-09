@@ -308,3 +308,4 @@ Once configured, triggering `trigger-jenkins.ps1 -SecurityMode STRICT` will exec
 | Production readiness | System verified suitable for technical interviews and production demos. | **PASS** |
 
 **Conclusion**: All reported Jenkins pipeline failures have been diagnosed, repaired, and validated across both ADVISORY and STRICT modes. ArchitectIQ stands verified and production-ready.
+

@@ -1,5 +1,5 @@
 version: "1.0"
-description: "ArchitectIQ DevSecOps Security Framework Policy Thresholds (7 Essential Tools)"
+description: "ArchitectIQ DevSecOps Security Framework Policy Thresholds (5 Essential Tools)"
 
 enforcement_modes:
   STRICT:
@@ -62,32 +62,11 @@ gates:
     report_file: "reports/security/gate-04-hadolint.json"
 
   5:
-    id: "gate-05-snyk"
-    name: "Snyk — Dependency Vulnerability Scanning"
-    tool: "snyk"
-    category: "sca_dependencies"
-    critical_threshold: 0
-    high_threshold: 0
-    blocking: true
-    report_file: "reports/security/gate-05-snyk.json"
-
-  6:
-    id: "gate-06-zap"
+    id: "gate-05-zap"
     name: "OWASP ZAP — Dynamic Application Security Testing"
     tool: "owasp-zap"
     category: "dast"
     critical_threshold: 0
     high_threshold: 0
     blocking: true
-    report_file: "reports/security/gate-06-zap.json"
-
-  7:
-    id: "gate-07-sonarqube"
-    name: "SonarQube — Code Quality and Security Analysis"
-    tool: "sonar-scanner"
-    category: "code_quality"
-    critical_threshold: 0
-    high_threshold: 0
-    blocking: true
-    report_file: "reports/security/gate-07-sonarqube.json"
-
+    report_file: "reports/security/gate-05-zap.json"

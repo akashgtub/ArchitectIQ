@@ -30,12 +30,13 @@ Issue Detected
 
 ## 2. Common Scenarios & Resolutions
 
-### Scenario 1: Snyk or SonarCloud Gate Fails Pipeline with `BLOCKED`
-- **Symptom**: Jenkins build halts at Stage 9 (Snyk) or Stage 10/11 (SonarCloud) with exit code 1.
-- **Root Cause**: The pipeline was triggered in `STRICT` mode, and the mandatory cloud API tokens (`snyk-token`, `sonar-token`) are not configured in Jenkins.
+### Scenario 1: Security Gate Fails Pipeline with `BLOCKED` or `FAIL`
+- **Symptom**: Jenkins build halts at Stage 11 (Security Policy Evaluation) with exit code 1.
+- **Root Cause**: The pipeline was triggered in `STRICT` mode, and one of the 5 mandatory gates (TruffleHog, Bandit, Checkov, Hadolint, OWASP ZAP) reported critical/high findings, missing scanner, or unreachable target.
 - **Resolution**:
-  - To run in non-blocking mode: Pass parameter `SECURITY_ENFORCEMENT_MODE=ADVISORY` when triggering the build.
-  - To configure credentials in Jenkins: Navigate to `Manage Jenkins -> Credentials -> System -> Global credentials`, add Secret Text credentials with ID `snyk-token` and `sonar-token`.
+  - Review archived gate reports in `reports/security/gate-0X-*.json`.
+  - Fix detected security issues in code, Dockerfiles, or Terraform.
+  - To run in diagnostic mode for testing: Pass parameter `SECURITY_ENFORCEMENT_MODE=ADVISORY` when triggering the build.
 
 ---
 

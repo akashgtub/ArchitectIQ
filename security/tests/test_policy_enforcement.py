@@ -113,7 +113,7 @@ def run_all_fixture_tests():
 
     # 7. Missing credentials
     def s7(p):
-        create_fixture_report(p / "gate-08-snyk.json", "gate-08-snyk", "BLOCKED", "BLOCKED", error_info="Missing SNYK_TOKEN credentials")
+        create_fixture_report(p / "gate-01-trufflehog.json", "gate-01-trufflehog", "BLOCKED", "BLOCKED", error_info="Missing scanner credentials or API token")
     test_scenario("7. Missing credentials", s7, "BLOCKED", "APPROVED")
 
     # 8. Malformed scanner output

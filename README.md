@@ -41,9 +41,7 @@ The platform is designed around a **stateless, in-memory execution architecture*
         │ - Vitest (13 tests)  │      │ - Bandit (Python)    │      │ - Docker Image Tag   │
         │ - Total: 135/135 Pass│      │ - Checkov (IaC)      │      │ - Manifest Archive   │
         │                      │      │ - Hadolint (Docker)  │      │                      │
-        │                      │      │ - Snyk (SaaS Deps)   │      │                      │
         │                      │      │ - OWASP ZAP (DAST)   │      │                      │
-        │                      │      │ - SonarCloud (SaaS)  │      │                      │
         └──────────────────────┘      └──────────────────────┘      └──────────────────────┘
                                                  │
                                                  ▼ (On Pipeline SUCCESS)
@@ -82,7 +80,7 @@ The platform is designed around a **stateless, in-memory execution architecture*
 2. **Automated Deployment & Health Probing**: One-click deployment script (`scripts/deploy/deploy-docker.ps1`) with progressive health checks across backend, frontend, and reverse proxy. Single-instance Docker Compose recreation incurs a brief ~1–3s cutover interruption.
 3. **Automated Rollback Guard**: If containers fail health checks within 60 seconds, `scripts/deploy/rollback-docker.ps1` immediately restores the last verified stable image tag recorded in `reports/deployments/last-known-good.json`.
 4. **Hybrid CI/CD Orchestration**: GitHub Actions on Windows self-hosted runner triggers Jenkins via authenticated REST API, streams progressive build logs, retrieves security summaries, and deploys containers.
-5. **Seven-Gate DevSecOps Framework**: Standardized scanning across secrets (TruffleHog), code quality (Bandit), IaC misconfigurations (Checkov), Dockerfile linting (Hadolint), dependency vulnerabilities (Snyk SaaS), DAST probing (OWASP ZAP), and Quality Gate evaluation (SonarCloud SaaS).
+5. **Five-Gate DevSecOps Framework**: Standardized scanning across secrets (TruffleHog), code quality (Bandit), IaC misconfigurations (Checkov), Dockerfile linting (Hadolint), and DAST baseline probing (OWASP ZAP).
 6. **Resource-Safe Memory Guard**: Scanners dynamically inspect system RAM across Windows and Linux. Execution is guarded below `512.0 MB` with strict 30s-90s timeouts to prevent runaway processes.
 7. **Production Observability**: Native Prometheus metric exposition (`/metrics`) collecting latency histograms and HTTP status codes, mapped to automated Grafana monitoring dashboards.
 
@@ -115,13 +113,13 @@ powershell -ExecutionPolicy Bypass -File scripts\deploy\rollback-docker.ps1
 ### 3. Run DevSecOps Security Gate Suite
 ```powershell
 # Advisory mode: Audits all gates and publishes summary without blocking
-python security\framework\seven_gates_runner.py --mode ADVISORY
+python security\framework\five_gates_runner.py --mode ADVISORY
 
-# Strict mode: Enforces quality gates; blocks on any policy failure or missing token
-python security\framework\seven_gates_runner.py --mode STRICT
+# Strict mode: Enforces quality gates; blocks on any policy failure
+python security\framework\five_gates_runner.py --mode STRICT
 
 # View summary report
-python security\framework\seven_gates_runner.py --summary
+python security\framework\five_gates_runner.py --summary
 ```
 
 ### 4. Run Test Suites
@@ -135,7 +133,7 @@ npm --prefix frontend test
 
 ---
 
-## 🛡️ DevSecOps Seven Essential Security Gates
+## 🛡️ DevSecOps Five Essential Security Gates
 
 | Gate # | Scanner Tool | Target Scope | Output Artifact | Policy Verdict |
 | :---: | :--- | :--- | :--- | :---: |
@@ -143,11 +141,9 @@ npm --prefix frontend test
 | **2** | **Bandit** | Python AST security analysis (`backend/`) | `reports/security/gate-02-bandit.json` | **`PASS`** |
 | **3** | **Checkov** | Infrastructure-as-Code (`infrastructure/terraform`) | `reports/security/gate-03-checkov.json` | **`PASS`** |
 | **4** | **Hadolint** | Backend and frontend Dockerfiles | `reports/security/gate-04-hadolint.json` | **`PASS`** |
-| **5** | **Snyk** | Cloud SaaS dependency vulnerability engine | `reports/security/gate-05-snyk.json` | **`BLOCKED`** *(Token Req.)* |
-| **6** | **OWASP ZAP** | Baseline HTTP DAST probing against `:8000` | `reports/security/gate-06-zap.json` | **`PASS`** |
-| **7** | **SonarCloud** | Cloud SaaS code quality and security gate | `reports/security/gate-07-sonarqube.json` | **`BLOCKED`** *(Token Req.)* |
+| **5** | **OWASP ZAP** | Baseline HTTP DAST probing against `:8000` | `reports/security/gate-05-zap.json` | **`PASS`** |
 
-*Note: In `ADVISORY` mode, missing cloud credentials truthfully register as `BLOCKED` with diagnostic guidance while allowing CI/CD to complete. In `STRICT` mode, missing credentials safely halt the pipeline.*
+*Note: In `STRICT` mode, any failure or blocked scanner safely halts the CI/CD pipeline before release. In `ADVISORY` mode, findings are logged comprehensively without blocking deployment.*
 
 ---
 
@@ -158,6 +154,7 @@ npm --prefix frontend test
 - **[SRE & Operations Runbook](docs/RUNBOOK.md)**: Standard operating procedures for health probing, debugging, log streaming, and disaster recovery.
 - **[Automated Deployment Guide](docs/devops/DEPLOYMENT_GUIDE.md)**: Step-by-step rolling deployment and health verification.
 - **[Rollback & Recovery Guide](docs/devops/ROLLBACK_GUIDE.md)**: Stateful rollback procedures and volume protection.
-- **[Security & DevSecOps Guide](docs/devops/SECURITY_GUIDE.md)**: Seven gates, memory guardrails, and compliance enforcement.
-- **[CI/CD Pipeline Architecture](docs/devops/CICD_PIPELINE.md)**: Complete 14-stage Jenkins pipeline breakdown and GitHub Actions integration.
+- **[Security & DevSecOps Guide](docs/devops/SECURITY_GUIDE.md)**: Five gates, memory guardrails, and compliance enforcement.
+- **[CI/CD Pipeline Architecture](docs/devops/CICD_PIPELINE.md)**: Complete 15-stage Jenkins pipeline breakdown and GitHub Actions integration.
+- **[Troubleshooting Decision Tree](docs/devops/TROUBLESHOOTING.md)**: Diagnostic flowcharts and solutions for common operational issues.
 - **[Troubleshooting Decision Tree](docs/devops/TROUBLESHOOTING.md)**: Diagnostic flowcharts and solutions for common operational issues.

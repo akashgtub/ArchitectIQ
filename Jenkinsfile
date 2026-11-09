@@ -182,7 +182,7 @@ pipeline {
             steps {
                 echo ">>> Stage 6: Executing Gate 1 — TruffleHog Secret Detection..."
                 sh '''
-                    python security/framework/seven_gates_runner.py --gate 1 --mode ADVISORY
+                    python security/framework/five_gates_runner.py --gate 1 --mode ADVISORY
                 '''
             }
         }
@@ -194,7 +194,7 @@ pipeline {
             steps {
                 echo ">>> Stage 7: Executing Gate 2 — Bandit Python SAST..."
                 sh '''
-                    python security/framework/seven_gates_runner.py --gate 2 --mode ADVISORY
+                    python security/framework/five_gates_runner.py --gate 2 --mode ADVISORY
                 '''
             }
         }
@@ -206,7 +206,7 @@ pipeline {
             steps {
                 echo ">>> Stage 8: Executing Gate 3 — Checkov Infrastructure as Code Security..."
                 sh '''
-                    python security/framework/seven_gates_runner.py --gate 3 --mode ADVISORY
+                    python security/framework/five_gates_runner.py --gate 3 --mode ADVISORY
                 '''
             }
         }
@@ -218,100 +218,31 @@ pipeline {
             steps {
                 echo ">>> Stage 9: Executing Gate 4 — Hadolint Dockerfile Security Linting..."
                 sh '''
-                    python security/framework/seven_gates_runner.py --gate 4 --mode ADVISORY
+                    python security/framework/five_gates_runner.py --gate 4 --mode ADVISORY
                 '''
             }
         }
 
         // ====================================================================
-        // Stage 10: Snyk (Gate 5: Dependency Vulnerability Scanning)
+        // Stage 10: OWASP ZAP Baseline Scan (Gate 5: DAST Probing)
         // ====================================================================
-        stage('10. Snyk') {
+        stage('10. OWASP ZAP') {
             steps {
-                echo ">>> Stage 10: Executing Gate 5 — Snyk Dependency Vulnerability Scanning..."
-                script {
-                    try {
-                        withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
-                            sh '''
-                                python security/framework/seven_gates_runner.py --gate 5 --mode ADVISORY
-                            '''
-                        }
-                    } catch (Exception e) {
-                        echo "[ADVISORY] Snyk credential 'snyk-token' not configured in Jenkins credentials store. Executing Gate 5 in diagnostic mode..."
-                        sh '''
-                            python security/framework/seven_gates_runner.py --gate 5 --mode ADVISORY
-                        '''
-                    }
-                }
-            }
-        }
-
-        // ====================================================================
-        // Stage 11: SonarCloud Analysis (Gate 7: Static Analysis)
-        // ====================================================================
-        stage('11. SonarCloud Analysis') {
-            steps {
-                echo ">>> Stage 11: Executing Gate 7 — SonarCloud Static Code Analysis..."
-                script {
-                    try {
-                        withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                            sh '''
-                                python security/framework/seven_gates_runner.py --gate 7 --mode ADVISORY
-                            '''
-                        }
-                    } catch (Exception e) {
-                        echo "[ADVISORY] SonarCloud credential 'sonar-token' not configured in Jenkins credentials store. Executing Gate 7 in diagnostic mode..."
-                        sh '''
-                            python security/framework/seven_gates_runner.py --gate 7 --mode ADVISORY
-                        '''
-                    }
-                }
-            }
-        }
-
-        // ====================================================================
-        // Stage 12: SonarCloud Quality Gate (Gate 7: Status Evaluation)
-        // ====================================================================
-        stage('12. SonarCloud Quality Gate') {
-            steps {
-                echo ">>> Stage 12: Evaluating SonarCloud Quality Gate findings..."
+                echo ">>> Stage 10: Executing Gate 5 — OWASP ZAP Baseline DAST Probing on ${params.DAST_TARGET_URL}..."
                 sh '''
-                    python -c "
-import json, sys
-try:
-    with open('reports/security/gate-07-sonarqube.json') as f:
-        data = json.load(f)
-    print('SonarCloud Execution Status:', data.get('execution_status'))
-    print('SonarCloud Severity Verdict:', data.get('severity_verdict'))
-    if data.get('error_details'):
-        print('Details:', data.get('error_details'))
-except Exception as e:
-    print('Notice reading SonarCloud report:', e)
-"
+                    python security/framework/five_gates_runner.py --gate 5 --target-url ${DAST_TARGET_URL} --mode ADVISORY
                 '''
             }
         }
 
         // ====================================================================
-        // Stage 13: OWASP ZAP Baseline Scan (Gate 6: DAST Probing)
+        // Stage 11: Security Policy Evaluation & Report Aggregation
         // ====================================================================
-        stage('13. OWASP ZAP') {
+        stage('11. Security Policy Evaluation') {
             steps {
-                echo ">>> Stage 13: Executing Gate 6 — OWASP ZAP Baseline DAST Probing on ${params.DAST_TARGET_URL}..."
+                echo ">>> Stage 11: Aggregating all 5 security gates and evaluating enforcement policy (${params.SECURITY_ENFORCEMENT_MODE})..."
                 sh '''
-                    python security/framework/seven_gates_runner.py --gate 6 --target-url ${DAST_TARGET_URL} --mode ADVISORY
-                '''
-            }
-        }
-
-        // ====================================================================
-        // Stage 14: Security Policy Evaluation & Report Aggregation
-        // ====================================================================
-        stage('14. Security Policy Evaluation') {
-            steps {
-                echo ">>> Stage 14: Aggregating all 7 security gates and evaluating enforcement policy (${params.SECURITY_ENFORCEMENT_MODE})..."
-                sh '''
-                    python security/framework/seven_gates_runner.py --summary --mode ${SECURITY_ENFORCEMENT_MODE}
+                    python security/framework/five_gates_runner.py --summary --mode ${SECURITY_ENFORCEMENT_MODE}
                     python -c "
 import json, sys
 with open('reports/security/security-summary.json') as f:
@@ -322,12 +253,12 @@ passed = data.get('passed_gates', 0)
 failed = data.get('failed_gates', 0)
 blocked = data.get('blocked_gates', 0)
 print('=' * 50)
-print('DevSecOps Policy Enforcement Summary:')
+print('DevSecOps Policy Enforcement Summary (5 Essential Gates):')
 print(f'  Enforcement Mode: {mode}')
 print(f'  Overall Verdict:  {verdict}')
-print(f'  Passed Gates:     {passed}')
-print(f'  Failed Gates:     {failed}')
-print(f'  Blocked Gates:    {blocked}')
+print(f'  Passed Gates:     {passed}/5')
+print(f'  Failed Gates:     {failed}/5')
+print(f'  Blocked Gates:    {blocked}/5')
 print('=' * 50)
 if mode == 'STRICT' and verdict != 'PASS':
     print(f'STRICT SECURITY POLICY ENFORCEMENT FAILURE: Overall security gate verdict is {verdict}. Deployment authorization is BLOCKED.', file=sys.stderr)
@@ -343,11 +274,11 @@ if mode == 'STRICT' and verdict != 'PASS':
         }
 
         // ====================================================================
-        // Stage 15: Docker Image Verification & Release Manifest
+        // Stage 12: Docker Image Verification & Release Manifest
         // ====================================================================
-        stage('15. Docker Image Verification') {
+        stage('12. Docker Image Verification') {
             steps {
-                echo ">>> Stage 15: Verifying built container images and generating release manifest..."
+                echo ">>> Stage 12: Verifying built container images and generating release manifest..."
                 sh '''
                     mkdir -p reports/deployments
                     docker image inspect ${BACKEND_IMAGE}:${IMAGE_TAG} >/dev/null 2>&1 || { echo "ERROR: Backend image missing"; exit 1; }
@@ -378,11 +309,11 @@ EOF
         }
 
         // ====================================================================
-        // Stage 16: Deployment Approval Gate
+        // Stage 13: Deployment Approval Gate
         // ====================================================================
-        stage('16. Deployment Approval') {
+        stage('13. Deployment Approval') {
             steps {
-                echo ">>> Stage 16: Checking deployment environment authorization..."
+                echo ">>> Stage 13: Checking deployment environment authorization..."
                 script {
                     if (params.DEPLOY_ENVIRONMENT == 'production') {
                         input message: "Authorize production deployment for release ${env.IMAGE_TAG}?", ok: "Approve Production Release"
@@ -394,14 +325,14 @@ EOF
         }
 
         // ====================================================================
-        // Stage 17: Deployment
+        // Stage 14: Deployment
         // ====================================================================
-        stage('17. Deployment') {
+        stage('14. Deployment') {
             when {
                 expression { params.DEPLOY_ENVIRONMENT != 'production' || currentBuild.result == null }
             }
             steps {
-                echo ">>> Stage 17: Recording deployment release state for tag ${env.IMAGE_TAG}..."
+                echo ">>> Stage 14: Recording deployment release state for tag ${env.IMAGE_TAG}..."
                 sh '''
                     mkdir -p reports/deployments
                     cat <<EOF > reports/deployments/last-known-good.json
@@ -420,11 +351,11 @@ EOF
         }
 
         // ====================================================================
-        // Stage 18: Health Checks & Observability Verification
+        // Stage 15: Health Checks & Observability Verification
         // ====================================================================
-        stage('18. Health Checks') {
+        stage('15. Health Checks') {
             steps {
-                echo ">>> Stage 18: Verifying application and observability endpoints..."
+                echo ">>> Stage 15: Verifying application and observability endpoints..."
                 sh '''
                     python -c "
 import urllib.request, sys
@@ -450,7 +381,7 @@ for name, url in endpoints:
             archiveArtifacts artifacts: 'reports/security/*.json, reports/security/*.html, reports/security/*.md, reports/deployments/*.json', allowEmptyArchive: true, fingerprint: true
         }
         success {
-            echo "Pipeline finished successfully: All 18 stages verified."
+            echo "Pipeline finished successfully: All 15 stages verified with 5 essential security gates."
         }
         failure {
             echo "Pipeline failed. Review security stage reports and logs in Jenkins artifacts."

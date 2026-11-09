@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Runs all 7 DevSecOps Security Gates and aggregates the security summary.
+    Runs all 5 DevSecOps Security Gates and aggregates the security summary.
 .PARAMETER Mode
     STRICT or ADVISORY (default: STRICT)
 #>
@@ -13,10 +13,10 @@ $ErrorActionPreference = "Continue"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $VenvPy = Join-Path $RepoRoot "security\.venv\Scripts\python.exe"
 $PyCmd = if (Test-Path $VenvPy) { $VenvPy } else { "python" }
-$RunnerPy = Join-Path $RepoRoot "security\framework\seven_gates_runner.py"
+$RunnerPy = Join-Path $RepoRoot "security\framework\five_gates_runner.py"
 
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "      ARCHITECTIQ 7 ESSENTIAL DEVSECOPS GATES RUNNER        " -ForegroundColor Cyan
+Write-Host "      ARCHITECTIQ 5 ESSENTIAL DEVSECOPS GATES RUNNER        " -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "Enforcement Mode: $Mode" -ForegroundColor Yellow
 

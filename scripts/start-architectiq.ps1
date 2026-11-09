@@ -44,7 +44,6 @@ $componentStatus = [ordered]@{
     "Jenkins"       = "Pending"
     "Prometheus"    = "Pending"
     "Grafana"       = "Pending"
-    "SonarQube"     = "Pending"
     "Kubernetes"    = "Pending"
     "GitHub Runner" = "Pending"
 }
@@ -299,44 +298,9 @@ Write-Host "  Prometheus (http://localhost:9090):    $($componentStatus['Prometh
 Write-Host "  Grafana (http://localhost:3001):       $($componentStatus['Grafana'])" -ForegroundColor $(if ($grafanaHealthy) { "Green" } else { "Red" })
 
 # ==============================================================================
-# Phase 5: DevSecOps Security Infrastructure (SonarQube)
+# Phase 5: Kubernetes and Infrastructure Tools Verification
 # ==============================================================================
-Write-Host "`n[Phase 5/7] Checking DevSecOps Security Infrastructure (SonarQube)..." -ForegroundColor Yellow
-
-$os = Get-CimInstance Win32_OperatingSystem
-$freeMB = [math]::Round($os.FreePhysicalMemory / 1024, 0)
-$totalMB = [math]::Round($os.TotalVisibleMemorySize / 1024, 0)
-$requiredMB = 2560 # 2.5GB RAM requirement for SonarQube and Elasticsearch
-
-Write-Host "  Memory Check: Free Physical RAM = ${freeMB} MB / Total RAM = ${totalMB} MB" -ForegroundColor Gray
-if ($freeMB -lt $requiredMB) {
-    Write-Host "  [SKIPPED] Insufficient available memory for SonarQube." -ForegroundColor Yellow
-    Write-Host "  SonarQube requires at least 2560 MB RAM (Current free: ${freeMB} MB)." -ForegroundColor Yellow
-    Write-Host "  Skipping startup safely to preserve system stability and protect running containers." -ForegroundColor DarkYellow
-    $componentStatus["SonarQube"] = "Skipped (RAM: ${freeMB}MB < 2560MB)"
-    $global:ComponentsSkipped["SonarQube"] = "Available RAM (${freeMB} MB) is below the minimum 2560 MB requirement for SonarQube and its embedded Elasticsearch engine"
-} else {
-    $sonarRes = Start-IdempotentContainer -ContainerName "architectiq-sonarqube" -ComposeFile "infrastructure/security/docker-compose.security.yml" -ServiceName "sonarqube"
-    Write-Host "  Waiting for SonarQube readiness (http://localhost:9000/api/system/status)..." -ForegroundColor Gray
-    $sonarHealthy = $false
-    for ($i = 1; $i -le 25; $i++) {
-        Start-Sleep -Seconds 3
-        try {
-            $resp = Invoke-RestMethod -Uri "http://localhost:9000/api/system/status" -Method Get -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue
-            if ($resp.status -eq "UP") {
-                $sonarHealthy = $true
-                break
-            }
-        } catch {}
-    }
-    $componentStatus["SonarQube"] = if ($sonarHealthy) { "Running" } else { "Failed" }
-}
-Write-Host "  SonarQube (http://localhost:9000):     $($componentStatus['SonarQube'])" -ForegroundColor $(if ($componentStatus["SonarQube"] -eq "Running") { "Green" } elseif ($componentStatus["SonarQube"] -like "Skipped*") { "Yellow" } else { "Red" })
-
-# ==============================================================================
-# Phase 6: Kubernetes and Infrastructure Tools Verification
-# ==============================================================================
-Write-Host "`n[Phase 6/7] Verifying Kubernetes and Infrastructure Tools..." -ForegroundColor Yellow
+Write-Host "`n[Phase 5/6] Verifying Kubernetes and Infrastructure Tools..." -ForegroundColor Yellow
 
 $k8sStatus = "Unavailable"
 try {
@@ -377,9 +341,9 @@ try {
 Write-Host "  Verified Local Tools: $($toolsReport -join ', ')" -ForegroundColor Cyan
 
 # ==============================================================================
-# Phase 7: Security Scanning Tools Environment Verification
+# Phase 6: Security Scanning Tools Environment Verification (5 Essential Gates)
 # ==============================================================================
-Write-Host "`n[Phase 7/7] Preparing DevSecOps Security Scanning Environment..." -ForegroundColor Yellow
+Write-Host "`n[Phase 6/6] Preparing DevSecOps Security Scanning Environment (5 Essential Tools)..." -ForegroundColor Yellow
 Write-Host "  (Checking tool readiness only - scans will NOT be executed during startup)" -ForegroundColor Gray
 
 $scanners = [ordered]@{
@@ -387,9 +351,7 @@ $scanners = [ordered]@{
     "2. Bandit (Python SAST)"              = "Unavailable"
     "3. Checkov (IaC Security)"            = "Unavailable"
     "4. Hadolint (Dockerfile Security)"    = "Unavailable"
-    "5. Snyk (Dependency Vulnerabilities)" = "Unavailable"
-    "6. OWASP ZAP (DAST Baseline)"         = "Unavailable"
-    "7. SonarQube Scanner (Code Quality)"  = "Unavailable"
+    "5. OWASP ZAP (DAST Baseline)"         = "Unavailable"
 }
 
 # 1. TruffleHog
@@ -418,20 +380,10 @@ if (Get-Command hadolint -ErrorAction SilentlyContinue) {
     $scanners["4. Hadolint (Dockerfile Security)"] = "Ready (CLI installed)"
 }
 
-# 5. Snyk
-if (Get-Command snyk -ErrorAction SilentlyContinue) {
-    $scanners["5. Snyk (Dependency Vulnerabilities)"] = "Ready (CLI installed)"
-}
-
-# 6. OWASP ZAP
+# 5. OWASP ZAP
 $zapRunner = Join-Path $RepoRoot "security\runners\run-zap.ps1"
 if (Test-Path $zapRunner) {
-    $scanners["6. OWASP ZAP (DAST Baseline)"] = "Ready (Framework runner available)"
-}
-
-# 7. SonarQube Scanner
-if (Get-Command sonar-scanner -ErrorAction SilentlyContinue) {
-    $scanners["7. SonarQube Scanner (Code Quality)"] = "Ready (CLI installed)"
+    $scanners["5. OWASP ZAP (DAST Baseline)"] = "Ready (Framework runner available)"
 }
 
 foreach ($item in $scanners.GetEnumerator()) {
@@ -442,7 +394,7 @@ foreach ($item in $scanners.GetEnumerator()) {
 }
 
 # ==============================================================================
-# Phase 8: Final Status Dashboard and System Summary
+# Phase 7: Final Status Dashboard and System Summary
 # ==============================================================================
 Write-Host "`n"
 Write-Host "================================================================================" -ForegroundColor Cyan
@@ -456,7 +408,6 @@ $dashboardTable = @(
     [PSCustomObject]@{ Component = "Jenkins";       "Expected URL" = "http://localhost:8081"; Status = $componentStatus["Jenkins"] }
     [PSCustomObject]@{ Component = "Prometheus";    "Expected URL" = "http://localhost:9090"; Status = $componentStatus["Prometheus"] }
     [PSCustomObject]@{ Component = "Grafana";       "Expected URL" = "http://localhost:3001"; Status = $componentStatus["Grafana"] }
-    [PSCustomObject]@{ Component = "SonarQube";     "Expected URL" = "http://localhost:9000"; Status = $componentStatus["SonarQube"] }
     [PSCustomObject]@{ Component = "Kubernetes";    "Expected URL" = "kubectl get nodes";     Status = $componentStatus["Kubernetes"] }
     [PSCustomObject]@{ Component = "GitHub Runner"; "Expected URL" = "Windows Service";       Status = $componentStatus["GitHub Runner"] }
 )
