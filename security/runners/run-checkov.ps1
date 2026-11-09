@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Runs Gate 3: Checkov — Infrastructure as Code Security.
 .PARAMETER Mode

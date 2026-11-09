@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Runs Gate 5: OWASP ZAP — Dynamic Application Security Testing (DAST).
 .PARAMETER Mode

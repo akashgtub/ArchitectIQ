@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Runs Gate 2: Bandit — Python SAST.
 .PARAMETER Mode

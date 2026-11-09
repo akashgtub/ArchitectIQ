@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Runs Gate 4: Hadolint — Dockerfile Security Linting.
 .PARAMETER Mode

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Runs Gate 1: TruffleHog — Secret Detection.
 .PARAMETER Mode
